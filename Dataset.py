@@ -163,7 +163,7 @@ class Dataset:
             "max_encoder_seq_length": max_encoder_seq_length,
             "max_decoder_seq_length": max_decoder_seq_length
         }
-
+    
     def load_train_data(self): return self.load_dataset(self.train_path)
     def load_val_data(self): return self.load_dataset(self.val_path)
     def load_test_data(self): return self.load_dataset(self.test_path)

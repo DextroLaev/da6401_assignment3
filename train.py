@@ -3,9 +3,9 @@ from config import *
 from RNN import RNN_Seq2Seq
 
 if __name__ == '__main__':
-    train_path = 'dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.train.tsv'
-    test_path = 'dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.test.tsv'
-    val_path = 'dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.dev.tsv'
+    train_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.train.tsv'
+    test_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.test.tsv'
+    val_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.dev.tsv'
     dataset_c = Dataset(train_path,test_path,val_path)
 
 
@@ -15,7 +15,7 @@ if __name__ == '__main__':
 
     seq2seq_rnn = RNN_Seq2Seq(num_encoder_tokens=train_data_info['num_encoder_tokens'],
                               num_decoder_tokens=train_data_info['num_decoder_tokens'],
-                              latent_dim=LATENT_DIM,embedding_dim=256,num_layers=3)
+                              latent_dim=LATENT_DIM,embedding_dim=256,num_encoder_layers=3,num_decoder_layers=3,cell_type='RNN')
     
     seq2seq_rnn.train(train_encoder_input_data=train_data_info['encoder_input_data'],
                       train_decoder_input_data=train_data_info['decoder_input_data'],
