@@ -1,27 +1,24 @@
-from Dataset import Dataset
+import torch
 from config import *
-from RNN import RNN_Seq2Seq
+from dataset import Dataset
+from model import Seq2Seq_Model,Encoder,Decoder,BeamSearchDecoder
 
 if __name__ == '__main__':
-    train_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.train.tsv'
-    test_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.test.tsv'
-    val_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.dev.tsv'
-    dataset_c = Dataset(train_path,test_path,val_path)
+    input_lang,output_lang,train_loader,test_loader,valid_loader = Dataset().load_data(batch_size=32,lang='hi')
+    print("Data Loading is complete..")
+    encoder = Encoder(cell_type=TYPE,num_layers=ENCODER_NUM_LAYERS,hidden_dim=HIDDEN_DIM,
+                    embed_dim=EMBED_DIM,input_dim=INPUT_DIM,dropout_rate=DROPOUT_RATE,
+                    bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST).to(DEVICE)
+    beam_size = [1, 2, 4]
+    for i in beam_size:
+        decoder = BeamSearchDecoder(type=TYPE,num_layers=DECODER_NUM_LAYERS,hidden_dim=HIDDEN_DIM,dropout_rate=DROPOUT_RATE,
+                      bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST,embed_dim=EMBED_DIM,output_dim=OUTPUT_DIM
+                      ,beam_size=i, use_gumbel=True if i == 1 else False, temperature=0.8).to(DEVICE)
+        
+        print('Encoder-Decoder model Initiated')
+        seq2seq = Seq2Seq_Model(encoder,decoder).to(DEVICE)
 
+        print('Sequence to Sequence model initiated')
+        print('Starting Model Training..')
+        seq2seq.train_model(train_loader,valid_loader,epochs=30,wandb_log=False,learning_rate=LEARNING_RATE,teacher_ratio=0.5)    
 
-    train_data_info = dataset_c.load_train_data()
-    val_data_info = dataset_c.load_val_data()
-
-
-    seq2seq_rnn = RNN_Seq2Seq(num_encoder_tokens=train_data_info['num_encoder_tokens'],
-                              num_decoder_tokens=train_data_info['num_decoder_tokens'],
-                              latent_dim=LATENT_DIM,embedding_dim=256,num_encoder_layers=3,num_decoder_layers=3,cell_type='RNN')
-    
-    seq2seq_rnn.train(train_encoder_input_data=train_data_info['encoder_input_data'],
-                      train_decoder_input_data=train_data_info['decoder_input_data'],
-                      train_decoder_target_data=train_data_info['decoder_target_data'],
-                      val_encoder_input_data=val_data_info['encoder_input_data'],
-                      val_decoder_input_data=val_data_info['decoder_input_data'],
-                      val_decoder_target_data=val_data_info['decoder_target_data'],
-                      batch_size=BATCH_SIZE,epochs=EPOCHS,save_model=True
-                      )

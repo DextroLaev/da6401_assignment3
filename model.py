@@ -1,0 +1,373 @@
+import torch
+from config import *
+import random
+from dataset import start,end
+import numpy as np
+import wandb
+
+
+torch.set_grad_enabled(True)
+
+def cell(cell_type='RNN'):
+    if cell_type == 'RNN':
+        return torch.nn.RNN
+    elif cell_type == 'LSTM':
+        return torch.nn.LSTM
+    elif cell_type == 'GRU':
+        return torch.nn.GRU
+    
+class Encoder(torch.nn.Module):
+    def __init__(self,cell_type=TYPE,num_layers=ENCODER_NUM_LAYERS,hidden_dim=HIDDEN_DIM,embed_dim=EMBED_DIM,input_dim=INPUT_DIM,dropout_rate=DROPOUT_RATE,
+                 bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST):
+        super(Encoder,self).__init__()
+        self.hidden_dim = hidden_dim
+        self.num_layers = num_layers        
+        self.batch_first = batch_first
+        self.input_dim = input_dim
+        self.embed_dim = embed_dim
+        self.bidirectional = bidirectional
+        self.cell_type = cell_type
+        self.dropout_rate = 0 if num_layers <= 1 else dropout_rate
+
+        self.embedding = torch.nn.Embedding(self.input_dim,self.embed_dim)
+        self.cell = cell(self.cell_type)(self.embed_dim,self.hidden_dim,num_layers=self.num_layers,batch_first=batch_first,dropout=self.dropout_rate,bidirectional=bidirectional)
+    
+    def forward(self,input_tensor):
+        encoder_hidden = torch.zeros(self.num_layers*(1+self.bidirectional),input_tensor.size(0),self.hidden_dim,device=DEVICE)
+        encoder_cell = torch.zeros(self.num_layers*(1+self.bidirectional),input_tensor.size(0),self.hidden_dim,device=DEVICE)        
+
+        if self.cell_type == 'LSTM':
+            encoder_outputs,(encoder_hidden,encoder_cell) = self.forward_step(input_tensor,(encoder_hidden,encoder_cell))        
+        else:
+            encoder_outputs,encoder_hidden = self.forward_step(input_tensor,encoder_hidden)            
+
+        if self.cell_type == 'LSTM':
+            encoder_hidden = (encoder_hidden,encoder_cell)
+        return encoder_outputs,encoder_hidden            
+
+    def forward_step(self,input,hidden):
+        embedded = self.embedding(input)
+        embedded = torch.nn.functional.relu(embedded)
+        
+        if self.cell_type == 'LSTM':
+            hidden_state, cell_state = hidden
+            output, (hidden_state, cell_state) = self.cell(
+                embedded, (hidden_state, cell_state))
+            hidden_state = (hidden_state, cell_state)
+        else:
+            output, hidden_state = self.cell(embedded, hidden)
+        
+
+        return output, hidden_state
+
+class Decoder(torch.nn.Module):
+    def __init__(self,type= TYPE,num_layers=DECODER_NUM_LAYERS,hidden_dim=HIDDEN_DIM,dropout_rate=DROPOUT_RATE,bidirectional=BIDIRECTIONAL,
+                 batch_first=BATCH_FIRST,embed_dim=EMBED_DIM,output_dim=OUTPUT_DIM):
+        super(Decoder, self).__init__()
+        self.type = type
+        self.num_layers = num_layers
+        self.hidden_dim = hidden_dim
+        self.batch_first = batch_first
+        self.output_dim = output_dim
+        self.embed_dim = embed_dim
+        self.dropout_rate = 0 if num_layers <= 1 else dropout_rate
+        self.bidirectional = bidirectional
+
+        self.embedding = torch.nn.Embedding(self.output_dim, self.embed_dim)
+        self.cell = cell(type)(self.embed_dim, self.hidden_dim, num_layers=num_layers, batch_first=batch_first, dropout=self.dropout_rate, bidirectional=bidirectional)
+        self.out = torch.nn.Linear(self.hidden_dim*(1+self.bidirectional), self.output_dim)
+
+    def forward(self,encoder_outputs,encoder_hidden,target_tensor,teacher_ratio: float = 0.5,):
+        batch_size = encoder_outputs.size(0)
+        decoder_input = torch.empty(batch_size,1,dtype=torch.long,device=DEVICE).fill_(start)
+        decoder_outputs = []
+        if self.type == 'LSTM':
+            encoder_hidden, encoder_cell = encoder_hidden
+            if encoder_hidden.shape[0] != self.num_layers*(1+self.bidirectional):
+                encoder_hidden = encoder_hidden.mean(0)
+                encoder_hidden = torch.stack([encoder_hidden for i in range(self.num_layers*(1+self.bidirectional))])
+                encoder_cell = encoder_cell.mean(0)
+                encoder_cell = torch.stack([encoder_cell for i in range(self.num_layers*(1+self.bidirectional))])
+            decoder_cell = encoder_cell
+            decoder_hidden = encoder_hidden
+        else:
+            if encoder_hidden.shape[0] != self.num_layers*(1+self.bidirectional):
+                encoder_hidden = encoder_hidden.mean(0)
+                encoder_hidden = torch.stack([encoder_hidden for i in range(self.num_layers*(1+self.bidirectional))])
+            decoder_hidden = encoder_hidden
+
+        for i in range(MAX_LENGTH):
+            if self.type == 'LSTM':
+                decoder_output, (decoder_hidden, decoder_cell) = self.forward_step(decoder_input, (decoder_hidden, decoder_cell))
+            else:
+                decoder_output, decoder_hidden = self.forward_step(decoder_input, decoder_hidden)
+            decoder_outputs.append(decoder_output)
+
+            if target_tensor is not None and teacher_ratio > random.random():
+                decoder_input = target_tensor[:, i].unsqueeze(1)
+            else:
+                _, topi = decoder_output.topk(1)                
+                decoder_input = topi.squeeze(-1).detach()
+
+        decoder_outputs = torch.cat(decoder_outputs, dim=1)
+        return decoder_outputs, decoder_hidden
+
+    def forward_step(self,input,hidden):
+        
+        embed = self.embedding(input)
+        active_embed = torch.nn.functional.relu(embed)
+        if isinstance(self.cell, torch.nn.LSTM):
+            hidden_state, cell_state = hidden
+            output, (hidden_state, cell_state) = self.cell(
+                active_embed, (hidden_state, cell_state))            
+            output = self.out(output)
+            return output, (hidden_state, cell_state)
+        else:
+            output, hidden_state = self.cell(active_embed, hidden)
+            output = self.out(output)
+            return output, hidden_state
+        
+import heapq
+
+def gumbel_softmax_sample(logits, temperature=1.0, hard=False):
+    """
+    Sample from the Gumbel-Softmax distribution and optionally discretize using straight-through.
+
+    Args:
+        logits: [batch_size, vocab_size]
+        temperature: Gumbel-Softmax temperature
+        hard: Whether to use straight-through estimation
+
+    Returns:
+        Sampled tensor: [batch_size, vocab_size]
+    """
+    gumbel_noise = -torch.empty_like(logits).exponential_().log()
+    y = torch.nn.functional.softmax((logits + gumbel_noise) / temperature, dim=-1)
+
+    if hard:
+        # Straight-through: forward as one-hot, backward as soft
+        index = y.max(dim=-1, keepdim=True)[1]
+        y_hard = torch.zeros_like(logits).scatter_(-1, index, 1.0)
+        y = (y_hard - y).detach() + y
+    return y
+
+class BeamSearchDecoder(Decoder):
+    def __init__(self, beam_size=3, use_gumbel=False, temperature=1.0, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.beam_size = beam_size
+        self.use_gumbel = use_gumbel
+        self.temperature = temperature
+        
+
+    def forward(self, encoder_outputs, encoder_hidden, target_tensor=None, teacher_ratio=0.5):
+        if self.beam_size == 1 or target_tensor is not None:
+            return self.greedy_or_gumbel_decode(encoder_outputs, encoder_hidden, target_tensor, teacher_ratio)
+
+        # Batched beam search for inference
+        batch_size = encoder_outputs.size(0)
+        decoder_input = torch.full((batch_size * self.beam_size, 1), start, dtype=torch.long, device=DEVICE)
+
+        if self.type == 'LSTM':
+            encoder_hidden, encoder_cell = encoder_hidden
+            decoder_hidden = self._expand_for_beam(self._match_hidden_shape(encoder_hidden), self.beam_size)
+            decoder_cell = self._expand_for_beam(self._match_hidden_shape(encoder_cell), self.beam_size)
+        else:
+            decoder_hidden = self._expand_for_beam(self._match_hidden_shape(encoder_hidden), self.beam_size)
+            decoder_cell = None
+
+        sequences = torch.full((batch_size * self.beam_size, 1), start, dtype=torch.long, device=DEVICE)
+        scores = torch.zeros(batch_size * self.beam_size, device=DEVICE)
+        is_finished = torch.zeros_like(scores, dtype=torch.bool)
+
+        for _ in range(MAX_LENGTH):
+            if self.type == 'LSTM':
+                output, (decoder_hidden, decoder_cell) = self.forward_step(decoder_input, (decoder_hidden, decoder_cell))
+            else:
+                output, decoder_hidden = self.forward_step(decoder_input, decoder_hidden)
+
+            log_probs = torch.nn.functional.log_softmax(output[:, -1], dim=-1)
+            vocab_size = log_probs.size(1)
+            next_scores, next_tokens = torch.topk(log_probs, self.beam_size, dim=-1)
+
+            # Expand to compute all beam combinations
+            scores = scores.view(batch_size, self.beam_size, 1)
+            next_scores = next_scores.view(batch_size, self.beam_size, self.beam_size)
+            total_scores = scores + next_scores
+
+            flat_scores = total_scores.view(batch_size, -1)
+            top_scores, top_indices = torch.topk(flat_scores, self.beam_size, dim=-1)
+
+            beam_indices = top_indices // self.beam_size
+            token_indices = top_indices % self.beam_size
+
+            new_sequences = []
+            new_decoder_input = []
+            new_hidden = []
+            new_cell = [] if decoder_cell is not None else None
+
+            for b in range(batch_size):
+                for i in range(self.beam_size):
+                    old_idx = b * self.beam_size + beam_indices[b, i]
+                    token = next_tokens[old_idx][token_indices[b, i]]
+                    seq = torch.cat([sequences[old_idx], token.unsqueeze(0)], dim=0)
+                    new_sequences.append(seq)
+                    new_decoder_input.append(token.view(1))
+                    new_hidden.append(decoder_hidden[:, old_idx:old_idx+1])
+                    if decoder_cell is not None:
+                        new_cell.append(decoder_cell[:, old_idx:old_idx+1])
+
+            sequences = torch.stack(new_sequences)
+            decoder_input = torch.stack(new_decoder_input).to(DEVICE)
+            decoder_hidden = torch.cat(new_hidden, dim=1)
+            if decoder_cell is not None:
+                decoder_cell = torch.cat(new_cell, dim=1)
+
+            scores = top_scores.view(-1)
+            is_finished = is_finished | (sequences[:, -1] == end)
+            if is_finished.all():
+                break
+
+        sequences = sequences.view(batch_size, self.beam_size, -1)
+        final_scores = scores.view(batch_size, self.beam_size)
+        best_indices = final_scores.argmax(dim=1)
+        best_sequences = sequences[torch.arange(batch_size), best_indices]
+
+        one_hot_outputs = torch.nn.functional.one_hot(best_sequences[:, 1:], num_classes=self.output_dim).float()
+        return one_hot_outputs, decoder_hidden
+    
+    def greedy_or_gumbel_decode(self, encoder_outputs, encoder_hidden, target_tensor=None, teacher_ratio=0.5):
+        batch_size = encoder_outputs.size(0)
+        decoder_input = torch.full((batch_size, 1), start, dtype=torch.long, device=DEVICE)
+        decoder_outputs = []
+
+        if self.type == 'LSTM':
+            encoder_hidden, encoder_cell = encoder_hidden
+            decoder_hidden = self._match_hidden_shape(encoder_hidden)
+            decoder_cell = self._match_hidden_shape(encoder_cell)
+        else:
+            decoder_hidden = self._match_hidden_shape(encoder_hidden)
+            decoder_cell = None
+
+        for i in range(MAX_LENGTH):
+            if self.type == 'LSTM':
+                decoder_output, (decoder_hidden, decoder_cell) = self.forward_step(decoder_input, (decoder_hidden, decoder_cell))
+            else:
+                decoder_output, decoder_hidden = self.forward_step(decoder_input, decoder_hidden)
+            decoder_outputs.append(decoder_output)
+
+            use_teacher = target_tensor is not None and teacher_ratio > random.random()
+            if use_teacher:
+                decoder_input = target_tensor[:, i].unsqueeze(1)
+            else:
+                logits = decoder_output[:, -1]
+                if self.use_gumbel:
+                    gumbel_out = gumbel_softmax_sample(logits, temperature=self.temperature, hard=True)
+                    token_ids = gumbel_out.argmax(dim=-1, keepdim=True)
+                else:
+                    token_ids = logits.argmax(dim=-1, keepdim=True)
+                decoder_input = token_ids
+
+        decoder_outputs = torch.cat(decoder_outputs, dim=1)
+        return decoder_outputs, decoder_hidden
+
+    def _match_hidden_shape(self, hidden):
+        if hidden.shape[0] != self.num_layers * (1 + self.bidirectional):
+            mean = hidden.mean(0)
+            return torch.stack([mean for _ in range(self.num_layers * (1 + self.bidirectional))])
+        return hidden
+
+    def _expand_for_beam(self, tensor, beam_size):
+        if tensor.dim() == 3:  # [L, B, H]
+            L, B, H = tensor.shape
+            tensor = tensor.unsqueeze(2).repeat(1, 1, beam_size, 1)
+            return tensor.view(L, B * beam_size, H)
+        elif tensor.dim() == 2:  # [B, H]
+            B, H = tensor.shape
+            tensor = tensor.unsqueeze(1).repeat(1, beam_size, 1)
+            return tensor.view(B * beam_size, H)
+        elif tensor.dim() == 1:  # [B]
+            B = tensor.shape[0]
+            tensor = tensor.unsqueeze(1).repeat(1, beam_size)
+            return tensor.view(B * beam_size)
+        else:
+            raise ValueError("Unsupported tensor shape for beam expansion")
+
+class Seq2Seq_Model(torch.nn.Module):
+    def __init__(self,encoder:Encoder, decoder:Decoder):
+        super(Seq2Seq_Model,self).__init__()
+        self.encoder = encoder
+        self.decoder = decoder
+    
+    def forward(self,input_tensor,target_tensor=None,teacher_ratio=0.2):
+        input_tensor = input_tensor.to(DEVICE)
+        if target_tensor is not None:
+            target_tensor = target_tensor.to(DEVICE)
+        encoder_outputs,encoder_hidden = self.encoder(input_tensor)
+        decoder_outputs,_ = self.decoder(encoder_outputs,encoder_hidden,target_tensor,teacher_ratio)
+        return decoder_outputs
+
+    def train_model(self,train_loader,valid_loader,test_loader=None,epochs=30,wandb_log=False,learning_rate=0.01,teacher_ratio=0.5):
+        encoder_optimizer = torch.optim.Adam(self.encoder.parameters(), lr=learning_rate, weight_decay=1e-5)           
+        decoder_optimizer = torch.optim.Adam(self.decoder.parameters(), lr=learning_rate, weight_decay=1e-5)
+        criterion = torch.nn.CrossEntropyLoss()
+        encoder_scheduler = torch.optim.lr_scheduler.LinearLR(encoder_optimizer, start_factor=1, end_factor=0.5, total_iters=epochs)
+        decoder_scheduler = torch.optim.lr_scheduler.LinearLR(decoder_optimizer, start_factor=1, end_factor=0.5, total_iters=epochs)
+        if wandb_log:
+            wandb.login()
+        for epoch in range(epochs):
+            self.encoder.train()
+            self.decoder.train()
+            epoch_loss, epoch_acc = [], []
+
+            for input, target in train_loader:
+                input, target = input.to(DEVICE), target.to(DEVICE)
+                encoder_optimizer.zero_grad()
+                decoder_optimizer.zero_grad()
+                outputs = self(input, target, teacher_ratio=teacher_ratio)
+
+                loss = criterion(outputs.view(-1, outputs.size(-1)), target.view(-1))
+                loss.backward()
+
+                encoder_optimizer.step()
+                decoder_optimizer.step()
+
+                acc = ((outputs.argmax(-1) == target).all(1).sum() / target.size(0)).item()
+                epoch_loss.append(loss.item())
+                epoch_acc.append(acc)
+
+            train_loss, train_acc = np.mean(epoch_loss), np.mean(epoch_acc)
+
+            valid_loss, valid_acc = self.validate_model(valid_loader, criterion)
+
+            print(f'Epoch {epoch} | Train_Loss: {train_loss:.4f} | Train_Acc: {train_acc:.4f} | Valid_Loss: {valid_loss:.4f} | Valid_Acc: {valid_acc:.4f}')
+
+            if wandb_log:
+                wandb.log({
+                    'train_loss': train_loss,
+                    'train_acc': train_acc,
+                    'valid_loss': valid_loss,
+                    'valid_acc': valid_acc
+                })
+
+            encoder_scheduler.step()
+            decoder_scheduler.step()        
+    
+    def validate_model(self, dataloader, criterion):
+        self.encoder.eval()
+        self.decoder.eval()
+
+        losses, accuracies = [], []
+        with torch.no_grad():
+            for input, target in dataloader:
+                input, target = input.to(DEVICE), target.to(DEVICE)
+
+                outputs = self(input, target, teacher_ratio=0)
+
+                loss = criterion(outputs.view(-1, outputs.size(-1)), target.view(-1))
+                acc = ((outputs.argmax(-1) == target).all(1).sum() / target.size(0)).item()
+
+                losses.append(loss.item())
+                accuracies.append(acc)
+
+        return np.mean(losses), np.mean(accuracies)
+
