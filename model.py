@@ -305,8 +305,85 @@ class Seq2Seq_Model(torch.nn.Module):
         encoder_outputs,encoder_hidden = self.encoder(input_tensor)
         decoder_outputs,_ = self.decoder(encoder_outputs,encoder_hidden,target_tensor,teacher_ratio)
         return decoder_outputs
+    
+    def evaluate_dataset(self,encoder,decoder,dataloader,input_lang,output_lang,name=''):
+    
+        encoder.eval()
+        decoder.eval()
+        with torch.no_grad():
+            datas = []
+            for ind, data in enumerate(dataloader):
+                input, output = data
+                input = input.to(DEVICE)
+                encoder_outputs, encoder_hidden = encoder(input)
+                decoder_outputs, _ = decoder(
+                    encoder_outputs, encoder_hidden)
 
-    def train_model(self,train_loader,valid_loader,test_loader=None,epochs=30,wandb_log=False,learning_rate=0.01,teacher_ratio=0.5):
+                _, topi = decoder_outputs.topk(1)
+                decoded_ids = topi.squeeze()  # type: torch.Tensor
+
+                for i in range(input.shape[0]):
+                    input_word = []
+                    predicted_word = []
+                    output_word = []
+
+                    for j in range(MAX_LENGTH):
+                        if input[i][j].item() == end:
+                            break
+                        input_word.append(
+                            input_lang.index_to_word[input[i][j].item()])
+                    for j in range(MAX_LENGTH):
+                        if decoded_ids[i][j].item() == end:
+                            break
+                        predicted_word.append(
+                            output_lang.index_to_word[decoded_ids[i][j].item()])
+                    for j in range(MAX_LENGTH):
+                        if output[i][j].item() == end:
+                            break
+                        output_word.append(
+                            output_lang.index_to_word[output[i][j].item()])
+
+                    input_word = ''.join(input_word)
+                    predicted_word = ''.join(predicted_word)
+                    output_word = ''.join(output_word)
+                    datas.append([input_word, predicted_word, output_word])
+
+        with open('samples/'+name+'.txt', 'w') as f:
+            for item in datas:
+                for datum in item:
+                    f.write("%s,\t" % datum)
+                f.write("\n")
+        return data
+
+    def test_loss_acc(self,encoder_model,decoder_model,criterion,dataloader,teacher_ratio):
+   
+        encoder_model.eval()
+        decoder_model.eval()
+
+        losses = []
+        accuracies = []
+        with torch.no_grad():
+            for data in dataloader:
+                input, output = data
+
+                input = input.to(DEVICE)
+                target = output.to(DEVICE)
+                encoder_outputs, encoder_hidden = encoder_model(input)
+                decoder_outputs, _ = decoder_model(
+                    encoder_outputs, encoder_hidden, target, teacher_ratio)
+                loss = criterion(
+                    decoder_outputs.view(-1, decoder_outputs.size(-1)),
+                    target.view(-1)
+                )
+                # find the accuracy among decoder outputs and target
+                word_accuracy = ((decoder_outputs.argmax(-1) == target).all(1).sum() /
+                                decoder_outputs.size(0)).item()
+
+                losses.append(loss.item())
+                accuracies.append(word_accuracy)
+        return np.mean(losses), np.mean(accuracies)
+
+    def train_model(self,train_loader,valid_loader,input_lang,output_lang,test_loader=None,epochs=30,wandb_log=False,learning_rate=0.01,teacher_ratio=0.5,evaluate_test=False):
         encoder_optimizer = torch.optim.Adam(self.encoder.parameters(), lr=learning_rate, weight_decay=1e-5)           
         decoder_optimizer = torch.optim.Adam(self.decoder.parameters(), lr=learning_rate, weight_decay=1e-5)
         criterion = torch.nn.CrossEntropyLoss()
@@ -345,12 +422,19 @@ class Seq2Seq_Model(torch.nn.Module):
                 wandb.log({
                     'train_loss': train_loss,
                     'train_acc': train_acc,
-                    'valid_loss': valid_loss,
-                    'valid_acc': valid_acc
+                    'val_loss': valid_loss,
+                    'val_acc': valid_acc
                 })
 
             encoder_scheduler.step()
-            decoder_scheduler.step()        
+            decoder_scheduler.step()
+            if evaluate_test == True:
+                if epoch % 10:
+                    if test_loader is not None:
+                        test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5) 
+                        print("Test loss : {} | Test acc : {}".format(test_loss,test_acc))
+                        self.evaluate_dataset(encoder=self.encoder,decoder=self.decoder,input_lang=input_lang,output_lang=output_lang,name='vanilla')
+
     
     def validate_model(self, dataloader, criterion):
         self.encoder.eval()

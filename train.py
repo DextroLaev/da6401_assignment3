@@ -20,5 +20,5 @@ if __name__ == '__main__':
 
         print('Sequence to Sequence model initiated')
         print('Starting Model Training..')
-        seq2seq.train_model(train_loader,valid_loader,epochs=30,wandb_log=False,learning_rate=LEARNING_RATE,teacher_ratio=0.5)    
+        seq2seq.train_model(train_loader,valid_loader,input_lang,output_lang,epochs=30,wandb_log=False,learning_rate=LEARNING_RATE,teacher_ratio=0.5,evaluate_test=False)    
 
