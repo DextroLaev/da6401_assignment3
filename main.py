@@ -2,7 +2,7 @@ from dataset import Dataset
 from config import *
 import argparse
 import wandb
-from model import Encoder,Seq2Seq_Model,Decoder
+from model import Encoder,Seq2Seq_Model,BeamSearchDecoder
 from AttentionModel import Attention_Network,Decoder_Attention
 
 if __name__ == '__main__':
@@ -22,7 +22,7 @@ if __name__ == '__main__':
     
     parser.add_argument("-lr", "--learning_rate", type=float, default=1e-4,help="Learning rate used to optimize model parameters.")
     parser.add_argument("-w_d", "--weight_decay", type=float, default=0.00005,help="Weight decay used by optimizers.")
-
+    parser.add_argument("-beam_size", "--beam_size", type=int, default=3,help="Beam search value that takes top k values.")
     parser.add_argument('-t_forcing',"--teacher_forcing",type=float,default=0.5,help="Teacher forcing ration used in decoder while training.")
     parser.add_argument('--save_model',type=bool,default=False,choices=[True,False],help="If you want to save the trained model, set it to True")
     parser.add_argument('-logw',"--log_wandb",type=bool,default=False,choices=[True,False],help="If you want to log the performance of the model, set it to True")
@@ -30,7 +30,7 @@ if __name__ == '__main__':
     parser.add_argument("--evaluate",type=bool,default=False,choices=[True,False],help='Make it True if you want to get testing accuracy.')
     parser.add_argument('-lang',"--language",type=str,default='hi',choices=['hi','bn','gu','kn','ml','mr','pa','sd','ta','te','ur'],help='language you want to translate to.')
     parser.add_argument('-i_dim','--input_dim',type=int,default=28,help='Run the dataset.py seperately after making changes in the dataset.py, it will print the input dim, use that value.')
-    parser.add_argument('-o_dim',"--output_dim",type=int,default=65,help='Run the dataset.py seperately after making changes in the dataset.py, it will print the input dim, use that value.')    
+    parser.add_argument('-o_dim',"--output_dim",type=int,default=65,help='Run the dataset.py seperately after making changes in the dataset.py, it will print the output dim, use that value.')    
 
     args = parser.parse_args()
     
@@ -53,6 +53,7 @@ if __name__ == '__main__':
     input_dim = args.input_dim
     output_dim = args.output_dim
     language = args.language
+    beam_size = args.beam_size
     if log_wandb:
         wandb.login()
         wandb.init(project = args.wandb_project)
@@ -62,7 +63,7 @@ if __name__ == '__main__':
         encoder = Encoder(cell_type=cell_type,num_layers=enc_layers,hidden_dim=hidden_dim,
                     embed_dim=embed_dim,input_dim=input_dim,dropout_rate=dropout,
                     bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST).to(DEVICE)
-        decoder = Decoder(type=cell_type,num_layers=dec_layers,hidden_dim=hidden_dim,dropout_rate=dropout,
+        decoder = BeamSearchDecoder(beam_size=beam_size,type=cell_type,num_layers=dec_layers,hidden_dim=hidden_dim,dropout_rate=dropout,
                           bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST,embed_dim=embed_dim,output_dim=output_dim)
 
         model = Seq2Seq_Model(encoder=encoder,decoder=decoder).to(DEVICE)

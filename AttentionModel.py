@@ -270,10 +270,7 @@ class Attention_Network(torch.nn.Module):
                 if epoch % 10 == 0:
                     if test_loader is not None:
                         test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5) 
-                        print("Test loss : {} | Test acc : {}".format(test_loss,test_acc))
-        
-                        self.evaluate_data(input_lang=input_lang,output_lang=output_lang,name='attention',dataloader=test_loader,heatmap=heatmap)
-            
+                        print("Test loss : {} | Test acc : {}".format(test_loss,test_acc))                        
             torch.cuda.empty_cache()
         if evaluate_test == True:
             if test_loader is not None:

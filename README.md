@@ -56,15 +56,10 @@ These files contain the essential code for building and running the neural netwo
 
 - **`config.py`** ⚡  
   - contains the model specific configuration to run and train the respective models.
-
-
-- **`test.py`** 📊  
-  - This code is used evaluate the performance of the attention/vanilla model on the testing dataset.
-
+  
 
 - **`train.py`** ⚡  
   - This file is used to train the attention/vanilla model with the default configuration.
-  
 
 - **`model.py`** 🤖  
   - Implements the **Vanilla Model**.
@@ -117,8 +112,7 @@ These files contain the essential code for building and running the neural netwo
       | `--enc_layers` `(-e_layers)` | Number of encoder layers (eg: 1,2,3). |
       | `--dec_layers` `(-d_layers)` | Number of decoder layers (eg: 1,2,3). |
       | `--cell_type` `(-c_type)`        | type of the encoder-decoder cell (LSTM/RNN/GRU). |
-      | `--dropout` `(-do)`           | Dropout rate (e.g., 0.3). |
-      | `--dense_layer_neurons` `(-ls)` | Number of neurons in the dense layer. |
+      | `--dropout` `(-do)`           | Dropout rate (e.g., 0.3). |      
       | `--epochs` `(-e)`             | Number of training epochs. |
       | `--batch_size` `(-b)`         | Training batch size. |
       | `--learning_rate` `(-lr)`     | Learning rate for optimizer. |
@@ -130,10 +124,14 @@ These files contain the essential code for building and running the neural netwo
       | `--input_dim` `(-i_dim)`      | Run the dataset.py seperately after making changes in the dataset.py, it will print the input dim, use that value. |
       | `--output_dim` `(-o_dim)`      | Run the dataset.py seperately after making changes in the dataset.py, it will print the output dim, use that value. |
       | `--save_model` `(--save_model)` | Save the trained model checkpoint (True/False). |
-      | `--log_wandb` `(-logw)`       | Enable logging to wandb (True/False). |
+      | `--log_wandb` `(-logw)`       | Enable logging to wandb. |
 
 
- 
+- **`test.py`** 📊  
+  - This code is used evaluate the performance of the attention/vanilla model on the testing dataset.
+  - The arguments of this file is same as that of the `main.py` file.
+  - While testing make sure that you pass the same argument values that are needed to test the model.
+  - **Note:** This file don't take `--epochs`,`--learning_rate`,`--weight_decay`,`--evaluate`,`--save_model` as arguments, there is no need to use these arguments as this file onyl evaulate on the test dataset.
 
 
 ## 🚀 Training the Attention/Vanilla Based Encoder-Decoder Model
@@ -161,13 +159,15 @@ These files contain the essential code for building and running the neural netwo
 
 5. ### To train the attention/vanilla (with user input), run the following command:
     ```bash
-    python main.py -h_dim 256 -e_dim 64 --enc_layers 3 --dec_layers 3 --cell_type LSTM -do 0.2 -e 30 -b 16 -lr 0.001 -t_forcing 0.6 -arch transformer --evaluate True -lang hi --input_dim 28 --output_dim 65 --save_model True --log_wandb True
+    python main.py -h_dim 256 -e_dim 64 --enc_layers 3 --dec_layers 3 --cell_type LSTM -do 0.2 -e 30 -b 16 -lr 0.001 -t_forcing 0.6 -arch transformer --evaluate True -lang hi --input_dim 28 --output_dim 65 --save_model True --log_wandb
     ```
+    This will start training the network and start logging in wandb. If you don't want to log the data in Wandb then remove the `--log_wandb` flag.
+    
     Remember that `input_dim` and `output_dim` values can be obtained by running `dataset.py` file seperately.
 
 4. ### After the training , run the following command to test it
     ```bash
-    python test.py
+    python test.py -h_dim 256 -e_dim 64 --enc_layers 3 --dec_layers 3 --cell_type LSTM -do 0.2 -b 16 -t_forcing 0.6 -arch transformer -lang hi --input_dim 28 --output_dim 65 --log_wandb
     ```
 
 

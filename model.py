@@ -286,6 +286,7 @@ class Seq2Seq_Model(torch.nn.Module):
         super(Seq2Seq_Model,self).__init__()
         self.encoder = encoder
         self.decoder = decoder
+        self.criterion = torch.nn.CrossEntropyLoss()
     
     def forward(self,input_tensor,target_tensor=None,teacher_ratio=0.2):
         input_tensor = input_tensor.to(DEVICE)
@@ -344,7 +345,7 @@ class Seq2Seq_Model(torch.nn.Module):
                 f.write("\n")
         return data
 
-    def test_loss_acc(self,encoder_model,decoder_model,criterion,dataloader,teacher_ratio):
+    def test_loss_acc(self,encoder_model,decoder_model,dataloader,teacher_ratio):
    
         encoder_model.eval()
         decoder_model.eval()
@@ -360,7 +361,7 @@ class Seq2Seq_Model(torch.nn.Module):
                 encoder_outputs, encoder_hidden = encoder_model(input)
                 decoder_outputs, _ = decoder_model(
                     encoder_outputs, encoder_hidden, target, teacher_ratio)
-                loss = criterion(
+                loss = self.criterion(
                     decoder_outputs.view(-1, decoder_outputs.size(-1)),
                     target.view(-1)
                 )
@@ -375,7 +376,7 @@ class Seq2Seq_Model(torch.nn.Module):
     def train_model(self,train_loader,valid_loader,input_lang,output_lang,test_loader=None,epochs=30,wandb_log=False,learning_rate=0.01,teacher_ratio=0.5,evaluate_test=False,save_model=False):
         encoder_optimizer = torch.optim.Adam(self.encoder.parameters(), lr=learning_rate, weight_decay=1e-5)           
         decoder_optimizer = torch.optim.Adam(self.decoder.parameters(), lr=learning_rate, weight_decay=1e-5)
-        criterion = torch.nn.CrossEntropyLoss()
+        
         encoder_scheduler = torch.optim.lr_scheduler.LinearLR(encoder_optimizer, start_factor=1, end_factor=0.5, total_iters=epochs)
         decoder_scheduler = torch.optim.lr_scheduler.LinearLR(decoder_optimizer, start_factor=1, end_factor=0.5, total_iters=epochs)
         if wandb_log:
@@ -391,7 +392,7 @@ class Seq2Seq_Model(torch.nn.Module):
                 decoder_optimizer.zero_grad()
                 outputs = self(input, target, teacher_ratio=teacher_ratio)
 
-                loss = criterion(outputs.view(-1, outputs.size(-1)), target.view(-1))
+                loss = self.criterion(outputs.view(-1, outputs.size(-1)), target.view(-1))
                 loss.backward()
 
                 encoder_optimizer.step()
@@ -403,7 +404,7 @@ class Seq2Seq_Model(torch.nn.Module):
 
             train_loss, train_acc = np.mean(epoch_loss), np.mean(epoch_acc)
 
-            valid_loss, valid_acc = self.validate_model(valid_loader, criterion)
+            valid_loss, valid_acc = self.validate_model(valid_loader)
 
             print(f'Epoch {epoch} | Train_Loss: {train_loss:.4f} | Train_Acc: {train_acc:.4f} | Valid_Loss: {valid_loss:.4f} | Valid_Acc: {valid_acc:.4f}')
 
@@ -420,22 +421,20 @@ class Seq2Seq_Model(torch.nn.Module):
             if evaluate_test == True:
                 if epoch % 10 == 0:
                     if test_loader is not None:
-                        test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5,criterion=criterion) 
+                        test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5) 
                         print("Test loss : {} | Test acc : {}".format(test_loss,test_acc))
-        
-                        self.evaluate_dataset(encoder=self.encoder,decoder=self.decoder,input_lang=input_lang,output_lang=output_lang,name='vanilla',dataloader=test_loader)
         if evaluate_test == True:
             if test_loader is not None:
-                test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5,criterion=criterion) 
+                test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5) 
                 print("Test loss : {} | Test acc : {}".format(test_loss,test_acc))
 
                 self.evaluate_dataset(encoder=self.encoder,decoder=self.decoder,input_lang=input_lang,output_lang=output_lang,name='vanilla',dataloader=test_loader) 
 
         if save_model:
-            torch.save(self,'models/vanilla.pt')
+            torch.save(self.state_dict(),'models/vanilla.pth')
             print('Model saved at directory models/')
 
-    def validate_model(self, dataloader, criterion):
+    def validate_model(self, dataloader):
         self.encoder.eval()
         self.decoder.eval()
 
@@ -446,7 +445,7 @@ class Seq2Seq_Model(torch.nn.Module):
 
                 outputs = self(input, target, teacher_ratio=0)
 
-                loss = criterion(outputs.view(-1, outputs.size(-1)), target.view(-1))
+                loss = self.criterion(outputs.view(-1, outputs.size(-1)), target.view(-1))
                 acc = ((outputs.argmax(-1) == target).all(1).sum() / target.size(0)).item()
 
                 losses.append(loss.item())
