@@ -77,7 +77,7 @@ class Decoder(torch.nn.Module):
         self.cell = cell(type)(self.embed_dim, self.hidden_dim, num_layers=num_layers, batch_first=batch_first, dropout=self.dropout_rate, bidirectional=bidirectional)
         self.out = torch.nn.Linear(self.hidden_dim*(1+self.bidirectional), self.output_dim)
 
-    def forward(self,encoder_outputs,encoder_hidden,target_tensor,teacher_ratio: float = 0.5,):
+    def forward(self,encoder_outputs,encoder_hidden,target_tensor=None,teacher_ratio: float = 0.5,):
         batch_size = encoder_outputs.size(0)
         decoder_input = torch.empty(batch_size,1,dtype=torch.long,device=DEVICE).fill_(start)
         decoder_outputs = []
@@ -130,17 +130,6 @@ class Decoder(torch.nn.Module):
 import heapq
 
 def gumbel_softmax_sample(logits, temperature=1.0, hard=False):
-    """
-    Sample from the Gumbel-Softmax distribution and optionally discretize using straight-through.
-
-    Args:
-        logits: [batch_size, vocab_size]
-        temperature: Gumbel-Softmax temperature
-        hard: Whether to use straight-through estimation
-
-    Returns:
-        Sampled tensor: [batch_size, vocab_size]
-    """
     gumbel_noise = -torch.empty_like(logits).exponential_().log()
     y = torch.nn.functional.softmax((logits + gumbel_noise) / temperature, dim=-1)
 
@@ -348,7 +337,7 @@ class Seq2Seq_Model(torch.nn.Module):
                     output_word = ''.join(output_word)
                     datas.append([input_word, predicted_word, output_word])
 
-        with open('samples/'+name+'.txt', 'w') as f:
+        with open('predicted_vanilla/'+name+'.txt', 'w') as f:
             for item in datas:
                 for datum in item:
                     f.write("%s,\t" % datum)
@@ -383,7 +372,7 @@ class Seq2Seq_Model(torch.nn.Module):
                 accuracies.append(word_accuracy)
         return np.mean(losses), np.mean(accuracies)
 
-    def train_model(self,train_loader,valid_loader,input_lang,output_lang,test_loader=None,epochs=30,wandb_log=False,learning_rate=0.01,teacher_ratio=0.5,evaluate_test=False):
+    def train_model(self,train_loader,valid_loader,input_lang,output_lang,test_loader=None,epochs=30,wandb_log=False,learning_rate=0.01,teacher_ratio=0.5,evaluate_test=False,save_model=False):
         encoder_optimizer = torch.optim.Adam(self.encoder.parameters(), lr=learning_rate, weight_decay=1e-5)           
         decoder_optimizer = torch.optim.Adam(self.decoder.parameters(), lr=learning_rate, weight_decay=1e-5)
         criterion = torch.nn.CrossEntropyLoss()
@@ -429,13 +418,23 @@ class Seq2Seq_Model(torch.nn.Module):
             encoder_scheduler.step()
             decoder_scheduler.step()
             if evaluate_test == True:
-                if epoch % 10:
+                if epoch % 10 == 0:
                     if test_loader is not None:
-                        test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5) 
+                        test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5,criterion=criterion) 
                         print("Test loss : {} | Test acc : {}".format(test_loss,test_acc))
-                        self.evaluate_dataset(encoder=self.encoder,decoder=self.decoder,input_lang=input_lang,output_lang=output_lang,name='vanilla')
+        
+                        self.evaluate_dataset(encoder=self.encoder,decoder=self.decoder,input_lang=input_lang,output_lang=output_lang,name='vanilla',dataloader=test_loader)
+        if evaluate_test == True:
+            if test_loader is not None:
+                test_loss,test_acc = self.test_loss_acc(encoder_model=self.encoder,decoder_model=self.decoder,dataloader=test_loader,teacher_ratio=0.5,criterion=criterion) 
+                print("Test loss : {} | Test acc : {}".format(test_loss,test_acc))
 
-    
+                self.evaluate_dataset(encoder=self.encoder,decoder=self.decoder,input_lang=input_lang,output_lang=output_lang,name='vanilla',dataloader=test_loader) 
+
+        if save_model:
+            torch.save(self,'models/vanilla.pt')
+            print('Model saved at directory models/')
+
     def validate_model(self, dataloader, criterion):
         self.encoder.eval()
         self.decoder.eval()
@@ -454,4 +453,5 @@ class Seq2Seq_Model(torch.nn.Module):
                 accuracies.append(acc)
 
         return np.mean(losses), np.mean(accuracies)
+
 

@@ -39,13 +39,13 @@ def sweep_train():
 
     print('Sequence to Sequence model initiated')
     print('Starting Model Training..')
-    seq2seq.train_model(train_loader,valid_loader,input_lang,output_lang,epochs=30,wandb_log=True,learning_rate=lr,teacher_ratio=0.5,evaluate_test=True) 
+    seq2seq.train_model(train_loader,valid_loader,input_lang,output_lang,test_loader=test_loader,epochs=30,wandb_log=True,learning_rate=lr,teacher_ratio=0.5,evaluate_test=True) 
     
 
 if __name__ == '__main__':
    
     sweep_config = {
-		'name': 'seq2seq-exp(bayes-select)',
+		'name': 'seq2seq-exp(bayes-select)-LAB',
 		'method': 'bayes',
 		'metric': {'goal': 'maximize', 'name': 'val_acc'},
 		'parameters': {
@@ -54,13 +54,13 @@ if __name__ == '__main__':
 		    'dec_layers': {'values': [1,2,3]},
 		    'hidden_dim': {'values': [16,32,64,256]},
 		    'cell_type': {'values': ['RNN','GRU','LSTM']},
-        'dropout':{'values':[0.2,0.3]},        
-        'lr':{'values':[0.1,0.01,0.001]},
-        'teacher_forcing':{'values':[0.2,0.3,0.5,0.6]},
-        'batch_size':{'values':[16,32,64]},
-        'beam_size':{'values':[1,2,3]}
+            'dropout':{'values':[0.2,0.3]},        
+            'lr':{'values':[0.1,0.01,0.001]},
+            'teacher_forcing':{'values':[0.2,0.3,0.5,0.6]},
+            'batch_size':{'values':[16,32,64]},
+            'beam_size':{'values':[1,2,3]}
 		  }
     }
     sweep_id = wandb.sweep(sweep_config,project='dl-assignment3')
-    wandb.agent(sweep_id,sweep_train,count=50)
+    wandb.agent(sweep_id,sweep_train,count=80)
     wandb.finish()

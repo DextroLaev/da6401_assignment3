@@ -41,7 +41,7 @@ def sweep_train():
 
     print('Sequence to Sequence model initiated')
     print('Starting Model Training..')
-    attn_model.train_model(train_loader,valid_loader,input_lang,output_lang,test_loader,epochs=30,
+    attn_model.train_model(train_loader,valid_loader,input_lang,output_lang,test_loader,epochs=20,
                            wandb_log=True,learning_rate=lr,teacher_ratio=0.5,evaluate_test=True,heatmap=False)
     
 

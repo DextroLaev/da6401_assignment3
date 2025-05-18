@@ -1,93 +1,22 @@
-import keras
-import tensorflow as tf
+import torch
 from config import *
-from Dataset import Dataset
+from model import Encoder,Decoder,Seq2Seq_Model
+from AttentionModel import Decoder_Attention,Attention_Network
+from dataset import Dataset
 
-train_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.train.tsv'
-test_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.test.tsv'
-val_path = './dakshina_dataset_v1.0/hi/lexicons/hi.translit.sampled.dev.tsv'
-dataset_c = Dataset(train_path,test_path,val_path)
+if __name__ == '__main__':
+    input_lang,output_lang,train_loader,test_loader,valid_loader = Dataset().load_data(batch_size=16,lang='hi')
+    
+    
+    encoder = Encoder(cell_type='LSTM',num_layers=3,hidden_dim=256,
+                embed_dim=64,input_dim=28,dropout_rate=0.2,
+                bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST).to(DEVICE)
+    decoder = Decoder_Attention(type='LSTM',num_layers=3,hidden_dim=256,
+                                        dropout_rate=0.2,bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST,
+                                        embed_dim=64,output_dim=65).to(DEVICE)
+    model = Attention_Network(encoder=encoder,decoder=decoder).to(DEVICE)
 
-
-test_data = dataset_c.load_test_data()
-
-model = keras.models.load_model("s2s_model.keras")
-
-encoder_inputs = model.input[0]  # input_1
-encoder_outputs, state_h_enc, state_c_enc = model.layers[2].output  # lstm_1
-encoder_states = [state_h_enc, state_c_enc]
-encoder_model = keras.Model(encoder_inputs, encoder_states)
-
-decoder_inputs = model.input[1]  # input_2
-decoder_state_input_h = keras.Input(shape=(LATENT_DIM,))
-decoder_state_input_c = keras.Input(shape=(LATENT_DIM,))
-decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
-decoder_lstm = model.layers[3]
-decoder_outputs, state_h_dec, state_c_dec = decoder_lstm(
-    decoder_inputs, initial_state=decoder_states_inputs
-)
-decoder_states = [state_h_dec, state_c_dec]
-decoder_dense = model.layers[4]
-decoder_outputs = decoder_dense(decoder_outputs)
-decoder_model = keras.Model(
-    [decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states
-)
-
-# Reverse-lookup token index to decode sequences back to
-# something readable.
-
-num_encoder_tokens =test_data['num_encoder_tokens']
-num_decoder_tokens = test_data['num_decoder_tokens']
-input_token_index = test_data['input_token_index']
-target_token_index = test_data['target_token_index']
-max_decoder_seq_length = test_data['max_decoder_seq_length']
-max_encoder_seq_length = test_data['max_encoder_seq_length']
-
-reverse_input_char_index = dict((i, char) for char, i in test_data['input_token_index'].items())
-reverse_target_char_index = dict((i, char) for char, i in test_data['target_token_index'].items())
-
-
-def decode_sequence(input_seq):
-    # Encode the input as state vectors.
-    states_value = encoder_model.predict(input_seq, verbose=0)
-
-    # Generate empty target sequence of length 1.
-    target_seq = np.zeros((1, 1, num_decoder_tokens))
-    # Populate the first character of target sequence with the start character.
-    target_seq[0, 0, target_token_index["\t"]] = 1.0
-
-    # Sampling loop for a batch of sequences
-    # (to simplify, here we assume a batch of size 1).
-    stop_condition = False
-    decoded_sentence = ""
-    while not stop_condition:
-        output_tokens, h, c = decoder_model.predict(
-            [target_seq] + states_value, verbose=0
-        )
-
-        # Sample a token
-        sampled_token_index = np.argmax(output_tokens[0, -1, :])
-        sampled_char = reverse_target_char_index[sampled_token_index]
-        decoded_sentence += sampled_char
-
-        # Exit condition: either hit max length
-        # or find stop character.
-        if sampled_char == "\n" or len(decoded_sentence) > max_decoder_seq_length:
-            stop_condition = True
-
-        # Update the target sequence (of length 1).
-        target_seq = np.zeros((1, 1, num_decoder_tokens))
-        target_seq[0, 0, sampled_token_index] = 1.0
-
-        # Update states
-        states_value = [h, c]
-    return decoded_sentence
-
-for seq_index in range(20):
-    # Take one sequence (part of the training set)
-    # for trying out decoding.
-    input_seq = encoder_input_data[seq_index : seq_index + 1]
-    decoded_sentence = decode_sequence(input_seq)
-    print("-")
-    print("Input sentence:", input_texts[seq_index])
-    print("Decoded sentence:", decoded_sentence)
+    state = torch.load('models/attention_state.pth',map_location = DEVICE)
+    model.load_state_dict(state)
+    print(model.test_loss_acc(model.encoder,model.decoder,test_loader,teacher_ratio=0.5))
+    
