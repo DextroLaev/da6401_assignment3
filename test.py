@@ -189,7 +189,7 @@ if __name__ == '__main__':
                                            dropout_rate=dropout,bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST,
                                            embed_dim=embed_dim,output_dim=output_dim).to(DEVICE)
         model = Attention_Network(encoder=encoder,decoder=decoder).to(DEVICE)
-        state = torch.load('models/vanilla.pth',map_location = DEVICE)
+        state = torch.load('models/attention_state.pth',map_location = DEVICE)
     else:
         print("Wrong architecture type")
         exit()
