@@ -7,8 +7,6 @@ import numpy as np
 import wandb
 import seaborn as sns
 import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-
 
 class Attention_Module(torch.nn.Module):
     def __init__(self,layers,hidden_dim, bidirectional= False):
@@ -24,13 +22,20 @@ class Attention_Module(torch.nn.Module):
     def forward(self, query,keys):
         if self.bidirectional:
             query_t = torch.cat([query[:,-2,:],query[:,-1,:]],dim=1).unsqueeze(1)
-            scores = self.V_attn(torch.tanh(self.W_attn(query_t)) + self.U_attn(keys))
+            
         else:
-            scores = self.V_attn(torch.tanh(self.W_attn(query[:,-1,:].unsqueeze(1))) + self.U_attn(keys))
-        scores = scores.squeeze(2).unsqueeze(1)
-        weight = torch.nn.functional.softmax(scores,dim=-1)
-        context = torch.bmm(weight,keys)
-        return context,weight            
+            query_t = query[:,-1,:].unsqueeze() #added this new
+            
+        query_proj = self.W_attn(query_t)
+        
+        keys_proj = self.U_attn(keys)
+        energy = torch.tanh(query_proj+keys_proj)
+
+        attention_score = self.V_attn(energy).squeeze(2)
+        attention_weights = torch.nn.functional.softmax(attention_score,dim=1).unsqueeze(1)
+        context = torch.bmm(attention_weights,keys)
+        return context,attention_weights  
+        
 
 class Decoder_Attention(torch.nn.Module):
     def __init__(self,type= TYPE,num_layers=DECODER_NUM_LAYERS,hidden_dim=HIDDEN_DIM,dropout_rate=DROPOUT_RATE,bidirectional=BIDIRECTIONAL,
@@ -100,6 +105,11 @@ class Decoder_Attention(torch.nn.Module):
         if isinstance(self.cell, torch.nn.LSTM):
             hidden_state, cell_state = hidden
             query = hidden_state.permute(1, 0, 2)
+
+            # h_fwd = hidden_state[-2]
+            # h_bwd = hidden_state[-1]
+            # h_top = torch.cat([h_fwd,h_bwd],dim=1)
+            # query = h_top.unsqueeze(1)
             context, attn_weights = self.attention_module(query, outputs)
             active_embed = torch.cat((active_embed, context), dim=2)
             output, (hidden_state, cell_state) = self.cell(
@@ -109,6 +119,10 @@ class Decoder_Attention(torch.nn.Module):
             return output, (hidden_state, cell_state), attn_weights
         else:
             query = hidden.permute(1, 0, 2)
+            # h_fwd = hidden_state[-2]
+            # h_bwd = hidden_state[-1]
+            # h_top = torch.cat([h_fwd,h_bwd],dim=1)            
+            # query = h_top.unsqueeze(1)
             context, attn_weights = self.attention_module(query, outputs)
             active_embed = torch.cat((active_embed, context), dim=2)
             output, hidden_state = self.cell(active_embed, hidden)
@@ -179,7 +193,7 @@ class Attention_Network(torch.nn.Module):
                         plt.xticks(range(output_len),output_word)
                         plt.yticks(range(input_len),input_word)
                         # plt.show()
-                        plt.savefig("attention_heatmap_"+name+'_'+str(ind)+'.png')
+                        plt.savefig("predicted_attention/attention_heatmap_"+name+'_'+str(ind)+'.png')
                         plt.close()
 
                     input_word = ''.join(input_word)
@@ -280,7 +294,7 @@ class Attention_Network(torch.nn.Module):
                 self.evaluate_data(input_lang=input_lang,output_lang=output_lang,name='attention',dataloader=test_loader,heatmap=heatmap) 
         
         if save_model:
-            torch.save(self.state_dict(),'models/attention_state.pth')
+            torch.save(self.state_dict(),'models/attention_new.pth')
             print('Model saved at models/')
     
     def validate_model(self, dataloader):

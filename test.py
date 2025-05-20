@@ -6,7 +6,7 @@ from dataset import Dataset
 import wandb
 import argparse
 import matplotlib
-from utils import log_test_predictions_to_wandb
+from utils import log_test_predictions_to_wandb,generate_word_heatmap
 
 
 matplotlib.rcParams['font.family'] = ['Noto Sans', 'Noto Sans Devanagari', 'sans-serif']
@@ -76,7 +76,7 @@ if __name__ == '__main__':
                                            dropout_rate=dropout,bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST,
                                            embed_dim=embed_dim,output_dim=output_dim).to(DEVICE)
         model = Attention_Network(encoder=encoder,decoder=decoder).to(DEVICE)
-        state = torch.load('models/attention_state.pth',map_location = DEVICE)
+        state = torch.load('models/attention_new.pth',map_location = DEVICE)
     else:
         print("Wrong architecture type")
         exit()
@@ -85,4 +85,6 @@ if __name__ == '__main__':
         log_test_predictions_to_wandb(model.encoder,model.decoder,test_loader=test_loader,input_lang=input_lang,output_lang=output_lang,name=arch)
     test_loss,test_acc = model.test_loss_acc(model.encoder,model.decoder,test_loader,teacher_ratio=teacher_forcing)
     print('Test Loss: {}, Test Acc: {}'.format(test_loss,test_acc))
-    
+    if model == 'attention':
+        generate_word_heatmap(model.encoder,model.decoder,test_loader,input_lang,output_lang,
+                          name='attention')

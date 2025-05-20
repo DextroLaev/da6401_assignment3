@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 import random
 import matplotlib.ticker as ticker
 import seaborn as sns
+import pandas as pd
 
 def get_attention_map(encoder, decoder, dataloader, input_lang, output_lang):
     for inputs, targets in dataloader:
@@ -83,59 +84,74 @@ def plot_attention_grid(src_words, pred_words, attentions):
         plt.savefig(solo_path, dpi=300)
         plt.close(fig)
 
-def generate_word_heatmap(encoder,decoder,dataloader,input_lang,output_lang,name='',num_heatmaps=10):
-
+def generate_word_heatmap(encoder, decoder, dataloader, input_lang, output_lang,
+                          name='', num_heatmaps=10):
     encoder.eval()
     decoder.eval()
+
     count = 0
     with torch.no_grad():
-        for ind, data in enumerate(dataloader):
-            input, output = data
-            input = input.to(DEVICE)
-            encoder_outputs, encoder_hidden = encoder(input)
-            decoder_outputs, hidden_states,attention_weights = decoder(
-                encoder_outputs, encoder_hidden)
+        for batch_idx, (inputs, outputs) in enumerate(dataloader):
+            inputs = inputs.to(DEVICE)
+            encoder_outputs, encoder_hidden = encoder(inputs)
+            decoder_outputs, hidden_states, attention_weights = decoder(
+                encoder_outputs, encoder_hidden
+            )
 
+            # pick the top‐1 prediction per time‐step
             _, topi = decoder_outputs.topk(1)
-            decoded_ids = topi.squeeze()  # type: torch.Tensor
+            decoded_ids = topi.squeeze()  # [B, T_out]
 
-            for i in range(input.shape[0]):
+            B, T_in = inputs.size()
+            _, T_out = decoded_ids.size()
+
+            for i in range(B):
+                # reconstruct the two strings
                 input_word = []
-                predicted_word = []
-                output_word = []
+                for t in range(T_in):
+                    idx = inputs[i, t].item()
+                    if idx == end: break
+                    input_word.append(input_lang.index_to_word[idx])
 
-                for j in range(MAX_LENGTH):
-                    if input[i][j].item() == end:
-                        break
-                    input_word.append(
-                        input_lang.index_to_word[input[i][j].item()])
-                for j in range(MAX_LENGTH):
-                    if decoded_ids[i][j].item() == end:
-                        break
-                    predicted_word.append(
-                        output_lang.index_to_word[decoded_ids[i][j].item()])
-                for j in range(MAX_LENGTH):
-                    if output[i][j].item() == end:
-                        break
-                    output_word.append(
-                        output_lang.index_to_word[output[i][j].item()])
+                pred_word = []
+                for t in range(T_out):
+                    idx = decoded_ids[i, t].item()
+                    if idx == end: break
+                    pred_word.append(output_lang.index_to_word[idx])
+
+                # slice out just the valid part of the attention [T_out, T_in]
+                L_out = len(pred_word)
+                L_in  = len(input_word)
+                attn = attention_weights[i, :L_out, :L_in].cpu().numpy()
                 
+                fig = plt.figure(figsize=(6,6))
+                ax = fig.add_subplot(1,1,1)
+                ax.matshow(attn,cmap='viridis')
+                ax.set_aspect('equal')
+
+                # # set ticks so that columns=input, rows=predicted
+                ax.set_xticks(np.arange(L_in))
+                ax.set_xticklabels(input_word, rotation=0, fontsize=12)
+                ax.set_yticks(np.arange(L_out))
+                ax.set_yticklabels(pred_word, fontsize=12)
+
+
+                # ax.xaxis.set_ticks_position('bottom')
+                ax.set_xlabel('Source (input)', fontsize=14)
+                ax.set_ylabel('Prediction (output)', fontsize=14)
+                ax.set_title(f'Attention heatmap {batch_idx*B + i + 1}', fontsize=16)
+
+                # # colorbar just like your first heatmap
+
+                save_path = f"predicted_attention/attention_{name}_{batch_idx}_{i}.png"
+                plt.savefig(save_path, dpi=300)
+                plt.close(fig)
+
+                count += 1
+                if count >= num_heatmaps:
+                    return
                 
-                input_len = len(input_word)
-                output_len = len(output_word)
-                
-                
-                att_w = attention_weights[i,:output_len,:input_len].cpu().detach().numpy()
-                att_w = np.exp(att_w)
-                att_w = att_w / att_w.sum(axis=1, keepdims=True)
-                sns.heatmap(att_w)
-                plt.xticks(range(output_len),output_word)
-                plt.yticks(range(input_len),input_word)
-                plt.savefig("predicted_attention/attention_heatmap_"+name+'_'+str(ind)+'.png')
-                plt.close()
-            count +=1 
-            if count == num_heatmaps:
-                break
+
 
 def log_test_predictions_to_wandb(encoder, decoder, test_loader, input_lang, output_lang, name="vanilla"):
     
