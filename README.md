@@ -150,9 +150,10 @@ These files contain the essential code for building and running the neural netwo
 
 ## 🚀 Training the Attention/Vanilla Based Encoder-Decoder Model
 
-1. ### Before training the model you need to create a `models/` directory parent folder i.e `./`
+1. ### Before training the model you need to create a `models/` directory parent folder i.e `./` and also install the requirements.tx
     ```bash
     mkdir models
+    pip install -r requirements.txt
     ```
 
 2.  ### First install the necessary dependencies
