@@ -1,3 +1,23 @@
+"""
+run_sweep_attention.py
+
+Run a Weights & Biases hyperparameter sweep for an attention-based
+sequence-to-sequence translation model.
+
+This script defines a `sweep_train` function that:
+  1. Logs in to W&B with an API key.
+  2. Initializes a new run named according to the current hyperparameter configuration.
+  3. Loads the dataset and builds an encoder and attention decoder based on the sweep parameters.
+  4. Trains the Attention_Network model, logging metrics (training/validation loss & accuracy,
+     plus optional test evaluation) to W&B.
+
+When executed as the main module, it:
+  - Defines a Bayesian sweep configuration over embedding size, number of layers,
+    hidden dimensions, RNN cell type, dropout rate, learning rate, teacher forcing ratio,
+    and batch size.
+  - Launches the W&B agent to run the specified number of sweep trials.
+"""
+
 import wandb
 from config import *
 from dataset import Dataset
@@ -6,9 +26,24 @@ from model import Encoder
 from AttentionModel import Attention_Network,Decoder_Attention
 
 def sweep_train():
-    print('trying to login')
-    wandb.login(key='702a37b01ca39351ffb1a500f0354b1c31a63920')
-    print('Done logging, creating sweep')
+    """
+    Execute one training run for the current hyperparameter configuration in the W&B sweep.
+
+    This function performs the following steps:
+      1. Logs in to Weights & Biases .
+      2. Initializes a new W&B run and retrieves the hyperparameters from the sweep config.
+      3. Names the run based on cell type, embedding size, hidden dimension,
+         and number of encoder/decoder layers.
+      4. Loads the training, validation, and test datasets for the Hindi language.
+      5. Constructs:
+         - An Encoder with the specified cell type, number of layers,
+           hidden dimension, embedding dimension, dropout rate, and device settings.
+         - A Decoder_Attention with the same hyperparameters for attention.
+      6. Wraps them in an Attention_Network and trains for a fixed number of epochs,
+         logging metrics back to W&B.
+    """
+
+    wandb.login()
     var1 = wandb.init(project='dl-assignment3')
     w_config = var1.config
     batch_size = w_config.batch_size
@@ -20,6 +55,7 @@ def sweep_train():
     embed_dim = w_config.embed_size
     lr = w_config.lr
     batch_size = w_config.batch_size
+    teacher_ratio = w_config.teacher_forcing
 
     run_name = f"attention_cell_{cell_type}_embedDim_{embed_dim}_hiddenDim_{hidden_dim}_encLayer_{enc_layers}_decLayers_{dec_layers}"
     
@@ -42,7 +78,7 @@ def sweep_train():
     print('Sequence to Sequence model initiated')
     print('Starting Model Training..')
     attn_model.train_model(train_loader,valid_loader,input_lang,output_lang,test_loader,epochs=20,
-                           wandb_log=True,learning_rate=lr,teacher_ratio=0.5,evaluate_test=True,heatmap=False)
+                           wandb_log=True,learning_rate=lr,teacher_ratio=teacher_ratio,evaluate_test=True,heatmap=False)
     
 
 if __name__ == '__main__':
@@ -64,5 +100,5 @@ if __name__ == '__main__':
 		  }
     }
     sweep_id = wandb.sweep(sweep_config,project='dl-assignment3')
-    wandb.agent(sweep_id,sweep_train,count=80)
+    wandb.agent(sweep_id,sweep_train,count=50)
     wandb.finish()

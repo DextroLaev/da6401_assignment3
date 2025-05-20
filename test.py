@@ -1,3 +1,38 @@
+"""
+test.py
+
+Load a pretrained seq2seq translation model (vanilla or attention-based),
+run inference on the test set, log results to Weights & Biases, and
+(optionally) visualize attention heatmaps.
+
+Usage:
+  python test.py [--wandb_project PROJECT] [--wandb_entity ENTITY]
+                 [--hidden_dim H] [--embed_dim E] [--enc_layers N]
+                 [--dec_layers N] [--cell_type TYPE] [--dropout D]
+                 [--batch_size B] [--beam_size K] [--teacher_forcing R]
+                 [--log_wandb] [--architecture ARCH]
+                 [--language LANG] [--input_dim I] [--output_dim O]
+
+Options:
+  -wp, --wandb_project    W&B project name (default: 'dl-assignment3')
+  -we, --wandb_entity     W&B entity/account (default: 'cs24s031')
+  -h_dim, --hidden_dim    Size of hidden layers (default: 256)
+  -e_dim, --embed_dim     Embedding dimension (default: 64)
+  -e_layers, --enc_layers  Number of encoder layers (default: 3)
+  -d_layers, --dec_layers  Number of decoder layers (default: 3)
+  -c_type, --cell_type    RNN cell type: 'LSTM', 'GRU', or 'RNN' (default: 'LSTM')
+  -do, --dropout          Dropout rate (default: 0.3)
+  -b, --batch_size        Batch size (default: 16)
+  -beam_size, --beam_size Beam search width (default: 3)
+  -t_forcing, --teacher_forcing  
+                          Teacher forcing ratio (default: 0.5)
+  -logw, --log_wandb      Enable W&B logging
+  -arch, --architecture   'attention' or 'vanilla' (default: 'attention')
+  -lang, --language       Target language code (default: 'hi')
+  -i_dim, --input_dim     Input vocabulary size (default: 28)
+  -o_dim, --output_dim    Output vocabulary size (default: 65)
+"""
+
 import torch
 from config import *
 from model import Encoder,BeamSearchDecoder,Seq2Seq_Model
@@ -19,14 +54,14 @@ if __name__ == '__main__':
 
     parser.add_argument("-wp", "--wandb_project", type=str,help="Project name used to track experiments in Weights & Biases dashboard.",default='dl-assignment3')
     parser.add_argument("-we", "--wandb_entity", type=str,help="Wandb Entity used to track experiments in the Weights & Biases dashboard.",default='cs24s031')        
-    parser.add_argument('-h_dim',"--hidden_dim",type=int,default=32,help='hidden dim size')
+    parser.add_argument('-h_dim',"--hidden_dim",type=int,default=256,help='hidden dim size')
     parser.add_argument('-e_dim',"--embed_dim",type=int,default=64,help="Embedding layer dimension")    
     parser.add_argument('-e_layers',"--enc_layers",type=int,default=3,help="encoder layer number")
     parser.add_argument('-d_layers',"--dec_layers",type=int,default=3,help="deccoder layer number")    
-    parser.add_argument('-c_type',"--cell_type",type=str,default="GRU",choices=['LSTM','GRU','RNN'],help='type of the encoder-decoder cell')
+    parser.add_argument('-c_type',"--cell_type",type=str,default="LSTM",choices=['LSTM','GRU','RNN'],help='type of the encoder-decoder cell')
     parser.add_argument('-do',"--dropout",type=float,default=0.3,choices=[0.2,0.3,0.5,0.4,0.7,0.6],help='apply dropout')
         
-    parser.add_argument("-b", "--batch_size", type=int, default=64,help="Batch size used to train the neural network.")
+    parser.add_argument("-b", "--batch_size", type=int, default=16,help="Batch size used to train the neural network.")
     parser.add_argument("-beam_size", "--beam_size", type=int, default=3,help="Beam search value that takes top k values.")
     parser.add_argument('-t_forcing',"--teacher_forcing",type=float,default=0.5,help="Teacher forcing ration used in decoder while training.")
     parser.add_argument('-logw',"--log_wandb",action='store_true',help="Enable Weights & Biases logging.")
@@ -85,6 +120,5 @@ if __name__ == '__main__':
         log_test_predictions_to_wandb(model.encoder,model.decoder,test_loader=test_loader,input_lang=input_lang,output_lang=output_lang,name=arch)
     test_loss,test_acc = model.test_loss_acc(model.encoder,model.decoder,test_loader,teacher_ratio=teacher_forcing)
     print('Test Loss: {}, Test Acc: {}'.format(test_loss,test_acc))
-    if model == 'attention':
-        generate_word_heatmap(model.encoder,model.decoder,test_loader,input_lang,output_lang,
-                          name='attention')
+    if model == 'attention' and not log_wandb:
+        generate_word_heatmap(model.encoder,model.decoder,test_loader,input_lang,output_lang,name='attention')

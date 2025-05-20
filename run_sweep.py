@@ -1,3 +1,21 @@
+"""
+run_sweep.py
+
+Run a Weights & Biases hyperparameter sweep for a vanilla encoder–decoder
+sequence-to-sequence translation model with optional beam search or Gumbel decoding.
+
+This script defines a `sweep_train` function that:
+  - Logs in to W&B and initializes a new run with hyperparameters from the sweep config.
+  - Loads the dataset and builds the encoder and decoder models based on the sweep parameters.
+  - Trains the Seq2Seq model, logging training and validation metrics (and optionally test evaluation) to W&B.
+
+When executed as the main module, it:
+  - Defines a Bayesian sweep configuration over embedding size, number of layers,
+    hidden dimensions, RNN cell type, dropout rate, learning rate, teacher forcing ratio,
+    batch size, and beam size.
+  - Launches the W&B agent to run the specified number of sweep trials.
+"""
+
 import wandb
 from config import *
 from dataset import Dataset
@@ -5,6 +23,24 @@ from dataset import Dataset
 from model import Encoder,BeamSearchDecoder,Seq2Seq_Model
 
 def sweep_train():
+    """
+    Perform one training run for the current hyperparameter configuration in the W&B sweep.
+
+    This function:
+      1. Logs in to Weights & Biases and initializes a run named according to the model
+         configuration (cell type, embedding size, hidden dimension, encoder/decoder layers).
+      2. Loads the train, validation, and test datasets for the specified language.
+      3. Constructs the encoder and decoder models using the sweep parameters:
+         - Embedding dimension, hidden dimension
+         - Number of encoder and decoder layers
+         - RNN cell type (RNN/GRU/LSTM)
+         - Dropout rate
+         - Beam size (with optional Gumbel decoding if beam_size == 1)
+      4. Wraps them in a Seq2Seq_Model and trains for a fixed number of epochs,
+         logging metrics (training/validation loss and accuracy, plus test evaluation)
+         back to W&B.
+    """
+
     wandb.login()
     var1 = wandb.init(project='dl-assignment3')
     w_config = var1.config
@@ -18,6 +54,7 @@ def sweep_train():
     lr = w_config.lr
     batch_size = w_config.batch_size
     beam_size = w_config.beam_size
+    teacher_forcing = w_config.teacher_forcing
 
     run_name = f"cell_{cell_type}_embedDim_{embed_dim}_hiddenDim_{hidden_dim}_encLayer_{enc_layers}_decLayers_{dec_layers}"
     
@@ -39,7 +76,7 @@ def sweep_train():
 
     print('Sequence to Sequence model initiated')
     print('Starting Model Training..')
-    seq2seq.train_model(train_loader,valid_loader,input_lang,output_lang,test_loader=test_loader,epochs=30,wandb_log=True,learning_rate=lr,teacher_ratio=0.5,evaluate_test=True) 
+    seq2seq.train_model(train_loader,valid_loader,input_lang,output_lang,test_loader=test_loader,epochs=20,wandb_log=True,learning_rate=lr,teacher_ratio=teacher_forcing,evaluate_test=True) 
     
 
 if __name__ == '__main__':
@@ -62,5 +99,5 @@ if __name__ == '__main__':
 		  }
     }
     sweep_id = wandb.sweep(sweep_config,project='dl-assignment3')
-    wandb.agent(sweep_id,sweep_train,count=80)
+    wandb.agent(sweep_id,sweep_train,count=50)
     wandb.finish()

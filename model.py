@@ -1,3 +1,19 @@
+"""
+model.py
+
+Defines the vanilla sequence-to-sequence architecture components:
+
+- `cell`: Utility to select the RNN cell class.
+- `Encoder`: Embeds inputs and processes them through an RNN/LSTM/GRU.
+- `Decoder`: Generates outputs step by step, with optional teacher forcing.
+- `BeamSearchDecoder`: Extends `Decoder` to support beam search or Gumbel decoding.
+- `Seq2Seq_Model`: Wraps encoder + decoder, and provides training, evaluation,
+  and testing routines.
+
+This module handles all core modeling logic for the vanilla (non-attention) setup.
+"""
+
+
 import torch
 from config import *
 import random
@@ -9,6 +25,15 @@ import wandb
 torch.set_grad_enabled(True)
 
 def cell(cell_type='RNN'):
+    """
+    Return the appropriate PyTorch RNN class based on the given cell type string.
+
+    Args:
+        cell_type (str): One of 'RNN', 'LSTM', or 'GRU'. Defaults to 'RNN'.
+
+    Returns:
+        torch.nn.Module: The corresponding recurrent layer class.
+    """
     if cell_type == 'RNN':
         return torch.nn.RNN
     elif cell_type == 'LSTM':
@@ -17,6 +42,23 @@ def cell(cell_type='RNN'):
         return torch.nn.GRU
     
 class Encoder(torch.nn.Module):
+    """
+    Encoder module for a sequence-to-sequence model.
+
+    Embeds the input token indices and processes them through a multi-layer
+    RNN/LSTM/GRU to produce encoder outputs and the final hidden state.
+
+    Args:
+        cell_type (str): Type of recurrent cell ('RNN', 'LSTM', or 'GRU').
+        num_layers (int): Number of stacked recurrent layers.
+        hidden_dim (int): Dimensionality of the hidden state.
+        embed_dim (int): Dimensionality of the input embeddings.
+        input_dim (int): Size of the input vocabulary.
+        dropout_rate (float): Dropout probability between layers (ignored if num_layers<=1).
+        bidirectional (bool): If True, use a bidirectional RNN.
+        batch_first (bool): If True, input/output tensors are batch-first.
+    """
+
     def __init__(self,cell_type=TYPE,num_layers=ENCODER_NUM_LAYERS,hidden_dim=HIDDEN_DIM,embed_dim=EMBED_DIM,input_dim=INPUT_DIM,dropout_rate=DROPOUT_RATE,
                  bidirectional=BIDIRECTIONAL,batch_first=BATCH_FIRST):
         super(Encoder,self).__init__()
@@ -33,6 +75,20 @@ class Encoder(torch.nn.Module):
         self.cell = cell(self.cell_type)(self.embed_dim,self.hidden_dim,num_layers=self.num_layers,batch_first=batch_first,dropout=self.dropout_rate,bidirectional=bidirectional)
     
     def forward(self,input_tensor):
+        """
+        Run the encoder on input sequences.
+
+        Args:
+            input_tensor (Tensor): LongTensor of shape (batch_size, seq_len)
+                containing input token indices.
+
+        Returns:
+            Tuple[Tensor, Tensor or Tuple]: 
+              - outputs: Tensor of shape (batch_size, seq_len, hidden_dim * num_directions)
+                containing all hidden states.
+              - hidden: final hidden state (and cell state for LSTM) ready for the decoder.
+        """
+
         encoder_hidden = torch.zeros(self.num_layers*(1+self.bidirectional),input_tensor.size(0),self.hidden_dim,device=DEVICE)
         encoder_cell = torch.zeros(self.num_layers*(1+self.bidirectional),input_tensor.size(0),self.hidden_dim,device=DEVICE)        
 
@@ -46,6 +102,9 @@ class Encoder(torch.nn.Module):
         return encoder_outputs,encoder_hidden            
 
     def forward_step(self,input,hidden):
+        '''
+        This is a helper function that is used in the actual forward() function.
+        '''
         embedded = self.embedding(input)
         embedded = torch.nn.functional.relu(embedded)
         
@@ -61,6 +120,22 @@ class Encoder(torch.nn.Module):
         return output, hidden_state
 
 class Decoder(torch.nn.Module):
+    """
+    Decoder module for a sequence-to-sequence model without attention.
+
+    Generates output tokens step-by-step, optionally using teacher forcing.
+
+    Args:
+        type (str): Type of recurrent cell ('RNN', 'LSTM', or 'GRU').
+        num_layers (int): Number of stacked recurrent layers.
+        hidden_dim (int): Dimensionality of the hidden state.
+        dropout_rate (float): Dropout probability between layers.
+        bidirectional (bool): If True, uses bidirectional recurrence internally.
+        batch_first (bool): If True, input/output tensors are batch-first.
+        embed_dim (int): Dimensionality of the token embeddings.
+        output_dim (int): Size of the output vocabulary.
+    """
+
     def __init__(self,type= TYPE,num_layers=DECODER_NUM_LAYERS,hidden_dim=HIDDEN_DIM,dropout_rate=DROPOUT_RATE,bidirectional=BIDIRECTIONAL,
                  batch_first=BATCH_FIRST,embed_dim=EMBED_DIM,output_dim=OUTPUT_DIM):
         super(Decoder, self).__init__()
@@ -77,7 +152,23 @@ class Decoder(torch.nn.Module):
         self.cell = cell(type)(self.embed_dim, self.hidden_dim, num_layers=num_layers, batch_first=batch_first, dropout=self.dropout_rate, bidirectional=bidirectional)
         self.out = torch.nn.Linear(self.hidden_dim*(1+self.bidirectional), self.output_dim)
 
-    def forward(self,encoder_outputs,encoder_hidden,target_tensor=None,teacher_ratio: float = 0.5,):
+    def forward(self,encoder_outputs,encoder_hidden,target_tensor=None,teacher_ratio=0.5):
+        """
+        Decode a full sequence given encoder outputs and initial hidden state.
+
+        Args:
+            encoder_outputs (Tensor): Outputs from the encoder (unused here).
+            encoder_hidden: Final hidden (and cell) state from the encoder.
+            target_tensor (Tensor, optional): Ground-truth token indices for teacher forcing.
+            teacher_ratio (float): Probability of using teacher forcing at each step.
+
+        Returns:
+            Tuple[Tensor, Tensor]:
+              - decoder_outputs: Tensor of shape (batch_size, max_len, output_dim)
+                with token logits.
+              - hidden: final hidden (and cell) state.
+        """
+
         batch_size = encoder_outputs.size(0)
         decoder_input = torch.empty(batch_size,1,dtype=torch.long,device=DEVICE).fill_(start)
         decoder_outputs = []
@@ -141,6 +232,18 @@ def gumbel_softmax_sample(logits, temperature=1.0, hard=False):
     return y
 
 class BeamSearchDecoder(Decoder):
+    """
+    Decoder with beam search decoding (or Gumbel sampling if beam_size==1).
+
+    Inherits from `Decoder` but overrides forward to perform batched beam search
+    during inference when no teacher-forcing targets are provided.
+
+    Args:
+        beam_size (int): Number of beams to keep during search.
+        use_gumbel (bool): If True and beam_size==1, use Gumbel-softmax sampling.
+        temperature (float): Temperature for Gumbel-softmax.
+        *args, **kwargs: Passed to base `Decoder` init.
+    """
     def __init__(self, beam_size=3, use_gumbel=False, temperature=1.0, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.beam_size = beam_size
@@ -149,6 +252,20 @@ class BeamSearchDecoder(Decoder):
         
 
     def forward(self, encoder_outputs, encoder_hidden, target_tensor=None, teacher_ratio=0.5):
+        """
+        Run beam search or fallback to greedy/Gumbel decoding.
+
+        Args:
+            encoder_outputs (Tensor): Encoder outputs (unused here).
+            encoder_hidden: Final hidden (and cell) state from the encoder.
+            target_tensor (Tensor, optional): Ground-truth for teacher forcing.
+            teacher_ratio (float): Teacher forcing ratio when using greedy/Gumbel.
+
+        Returns:
+            Tuple[Tensor, Tensor]: 
+              - decoded one-hot or logits of shape (batch_size, seq_len, output_dim)
+              - final hidden state.
+        """
         if self.beam_size == 1 or target_tensor is not None:
             return self.greedy_or_gumbel_decode(encoder_outputs, encoder_hidden, target_tensor, teacher_ratio)
 
@@ -282,6 +399,14 @@ class BeamSearchDecoder(Decoder):
             raise ValueError("Unsupported tensor shape for beam expansion")
 
 class Seq2Seq_Model(torch.nn.Module):
+    """
+    Wraps an Encoder and Decoder into a full Seq2Seq model with training,
+    validation, and testing routines.
+
+    Args:
+        encoder (Encoder): Instance of the Encoder class.
+        decoder (Decoder): Instance of Decoder or BeamSearchDecoder.
+    """
     def __init__(self,encoder:Encoder, decoder:Decoder):
         super(Seq2Seq_Model,self).__init__()
         self.encoder = encoder
@@ -289,6 +414,17 @@ class Seq2Seq_Model(torch.nn.Module):
         self.criterion = torch.nn.CrossEntropyLoss()
     
     def forward(self,input_tensor,target_tensor=None,teacher_ratio=0.2):
+        """
+        Run a forward pass through encoder and decoder.
+
+        Args:
+            input_tensor (Tensor): Source token indices.
+            target_tensor (Tensor, optional): Ground-truth token indices for teacher forcing.
+            teacher_ratio (float): Probability of using teacher forcing.
+
+        Returns:
+            Tensor: Decoder logits of shape (batch_size, seq_len, vocab_size).
+        """
         input_tensor = input_tensor.to(DEVICE)
         if target_tensor is not None:
             target_tensor = target_tensor.to(DEVICE)
@@ -297,7 +433,9 @@ class Seq2Seq_Model(torch.nn.Module):
         return decoder_outputs
     
     def evaluate_dataset(self,encoder,decoder,dataloader,input_lang,output_lang,name=''):
-    
+        """
+        This function is used to create a .txt file in which we write the input,predicted,ground_truth
+        """
         encoder.eval()
         decoder.eval()
         with torch.no_grad():
@@ -346,7 +484,16 @@ class Seq2Seq_Model(torch.nn.Module):
         return data
 
     def test_loss_acc(self,encoder_model,decoder_model,dataloader,teacher_ratio):
-   
+        """
+        This is a helper function used to calculate the loss and accuracy of the data passed
+        Input:
+            1. Encoder model
+            2. Decoder model
+            3. dataloader dataset
+            4. teacher ratio
+        Output:
+            loss, accuracy
+        """
         encoder_model.eval()
         decoder_model.eval()
 
@@ -374,6 +521,21 @@ class Seq2Seq_Model(torch.nn.Module):
         return np.mean(losses), np.mean(accuracies)
 
     def train_model(self,train_loader,valid_loader,input_lang,output_lang,test_loader=None,epochs=30,wandb_log=False,learning_rate=0.01,teacher_ratio=0.5,evaluate_test=False,save_model=False):
+        """
+        This function is used to train the Encoder-decoder Model
+        Input:
+            1. train_data_loader
+            2. validation_data_loader
+            3. input_lang
+            4. output_lang
+            5. test_data_loader
+            6. epochs
+            7. wandb_logging(TRUE/FALSE)
+            8. Learning_rate
+            9. teacher_ratio (for teacher forcing)
+            10. evaluate_test (True/False) -> Making this true, make the model to evaluate the test data after every few epochs
+            11. save_model (True/False) -> If you want to save the model, make it true
+        """
         encoder_optimizer = torch.optim.Adam(self.encoder.parameters(), lr=learning_rate, weight_decay=1e-5)           
         decoder_optimizer = torch.optim.Adam(self.decoder.parameters(), lr=learning_rate, weight_decay=1e-5)
         
@@ -435,6 +597,10 @@ class Seq2Seq_Model(torch.nn.Module):
             print('Model saved at directory models/')
 
     def validate_model(self, dataloader):
+        """used for computing validation loss and accuracy.
+            Input: Dataloader
+            Output: loss, accuracy 
+        """
         self.encoder.eval()
         self.decoder.eval()
 

@@ -1,90 +1,18 @@
+"""
+Utility functions for attention visualization and WandB logging in seq2seq models.
+"""
 import wandb
 from config import *
 import numpy as np
 from dataset import end
 import matplotlib.pyplot as plt
 import random
-import matplotlib.ticker as ticker
-import seaborn as sns
-import pandas as pd
-
-def get_attention_map(encoder, decoder, dataloader, input_lang, output_lang):
-    for inputs, targets in dataloader:
-        inputs = inputs.to(DEVICE)
-        enc_out, enc_hid = encoder(inputs)
-        dec_out, _, attention_map = decoder(enc_out, enc_hid)
-        preds = dec_out.argmax(-1).cpu()
-        B, T_in = inputs.size()
-        _, T_out = preds.size()
-        src_words, pred_words = [], []
-        for b in range(B):
-            w = []
-            for t in range(T_in):
-                idx = inputs[b, t].item()
-                if idx == end: break
-                w.append(input_lang.index_to_word[idx])
-            src_words.append(''.join(w))
-            w = []
-            for t in range(T_out):
-                idx = preds[b, t].item()
-                if idx == end: break
-                w.append(output_lang.index_to_word[idx])
-            pred_words.append(''.join(w))
-
-        return src_words, pred_words, attention_map.detach().cpu().numpy()
-
-    return [], [], np.zeros((0,0,0))
-
-def plot_attention_grid(src_words, pred_words, attentions):
-    B = len(src_words)
-    indices = np.random.choice(B, size=min(10, B), replace=False)
-
-    # 3×3 grid for first 9
-    fig, axes = plt.subplots(3, 3, figsize=(12,12),constrained_layout=True)
-    for ax, idx in zip(axes.flat, indices[:9]):
-        heat = attentions[idx]               # [T_out, T_in]
-        im = ax.imshow(heat, aspect='auto', cmap='viridis')
-        ax.set_title(f"Example #{idx+1}", fontsize=14)
-
-        # English source on x
-        ax.set_xticks(np.arange(len(src_words[idx])))
-        ax.set_xticklabels(list(src_words[idx]), rotation=90, fontsize=10)
-        # Hindi pred on y
-        ax.set_yticks(np.arange(len(pred_words[idx])))
-        ax.set_yticklabels(list(pred_words[idx]), fontsize=10)
-
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
-        ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+from matplotlib import ticker
+import os
+import torch
     
-    cbar = fig.colorbar(im, ax=axes.ravel().tolist(), shrink=0.8)
-    cbar.ax.set_ylabel("Attention weight", fontsize=12)
-    grid_path = 'plots'+"/attention_grid_3x3.png"
-    
-    plt.savefig(grid_path, dpi=300)
-    plt.close(fig)
 
-    # the 10th example standalone
-    if len(indices) > 9:
-        idx = indices[9]
-        fig, ax = plt.subplots(figsize=(6,6),constrained_layout=True)
-        heat = attentions[idx]
-        im = ax.imshow(heat, aspect='auto', cmap='viridis')
-        ax.set_title(f"Example #{idx+1}", fontsize=16)
-
-        ax.set_xticks(np.arange(len(src_words[idx])))
-        ax.set_xticklabels(list(src_words[idx]), rotation=90, fontsize=12)
-        ax.set_yticks(np.arange(len(pred_words[idx])))
-        ax.set_yticklabels(list(pred_words[idx]), fontsize=12)
-
-        ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
-        ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
-        fig.colorbar(im, ax=ax).ax.set_ylabel("Attention weight", fontsize=12)
-
-        solo_path = 'plots'+"/attention_example_10th.png"
-        plt.savefig(solo_path, dpi=300)
-        plt.close(fig)
-
-def generate_word_heatmap(encoder, decoder, dataloader, input_lang, output_lang,
+def generate_individual_heatmap(encoder, decoder, dataloader, input_lang, output_lang,
                           name='', num_heatmaps=10):
     encoder.eval()
     decoder.eval()
@@ -126,12 +54,14 @@ def generate_word_heatmap(encoder, decoder, dataloader, input_lang, output_lang,
                 
                 fig = plt.figure(figsize=(6,6))
                 ax = fig.add_subplot(1,1,1)
-                ax.matshow(attn,cmap='viridis')
+                img = ax.matshow(attn,cmap='viridis')
                 ax.set_aspect('equal')
 
                 # # set ticks so that columns=input, rows=predicted
                 ax.set_xticks(np.arange(L_in))
-                ax.set_xticklabels(input_word, rotation=0, fontsize=12)
+                ax.xaxis.set_ticks_position('bottom')
+                ax.xaxis.set_label_position('bottom')
+                ax.tick_params(axis='x', labelbottom=True, labeltop=False)
                 ax.set_yticks(np.arange(L_out))
                 ax.set_yticklabels(pred_word, fontsize=12)
 
@@ -141,20 +71,138 @@ def generate_word_heatmap(encoder, decoder, dataloader, input_lang, output_lang,
                 ax.set_ylabel('Prediction (output)', fontsize=14)
                 ax.set_title(f'Attention heatmap {batch_idx*B + i + 1}', fontsize=16)
 
+                cb = fig.colorbar(img, orientation='vertical',pad=0.15)
+                cb.ax.yaxis.set_ticks_position('left')
+                cb.ax.yaxis.set_label_position('left')
+                cb.ax.set_ylabel("Attention weight", fontsize=10)
                 # # colorbar just like your first heatmap
 
-                save_path = f"predicted_attention/attention_{name}_{batch_idx}_{i}.png"
+                save_path = f"plots/attention_{name}_{batch_idx}_{i}.png"
                 plt.savefig(save_path, dpi=300)
                 plt.close(fig)
 
                 count += 1
                 if count >= num_heatmaps:
                     return
-                
+
+def generate_word_heatmap(
+    encoder, decoder, dataloader, input_lang, output_lang,
+    name='', num_heatmaps=9
+):
+    """
+    Generate a 3×3 grid of word-level attention heatmaps with one colorbar
+    to the right of each heatmap.
+
+    Args:
+        encoder (torch.nn.Module): The encoder model.
+        decoder (torch.nn.Module): The decoder model with attention.
+        dataloader (DataLoader): Provides (inputs, outputs) batches.
+        input_lang, output_lang: vocab objects for index→char.
+        name (str): Prefix for the saved file name.
+        num_heatmaps (int): How many examples to plot (max 9).
+    """
+    encoder.eval()
+    decoder.eval()
+
+    # 1) Collect up to num_heatmaps examples
+    examples = []
+    with torch.no_grad():
+        for inputs, outputs in dataloader:
+            inputs = inputs.to(DEVICE)
+            enc_out, enc_hid = encoder(inputs)
+            dec_out, _, attn = decoder(enc_out, enc_hid)
+            _, topi = dec_out.topk(1)
+            decoded = topi.squeeze(-1).cpu().numpy()
+
+            B, T_in = inputs.size()
+            T_out = decoded.shape[1]
+            for b in range(B):
+                # Build source and predicted character lists
+                src, pred = [], []
+                for t in range(T_in):
+                    i = inputs[b, t].item()
+                    if i == end: break
+                    src.append(input_lang.index_to_word[i])
+                for t in range(T_out):
+                    i = decoded[b, t]
+                    if i == end: break
+                    pred.append(output_lang.index_to_word[i])
+                # Slice the attention matrix to actual lengths
+                mat = attn[b, :len(pred), :len(src)].cpu().numpy()
+                examples.append((src, pred, mat))
+                if len(examples) >= num_heatmaps:
+                    break
+            if len(examples) >= num_heatmaps:
+                break
+
+    import matplotlib.pyplot as plt
+    from matplotlib import ticker
+
+    # 2) Create a GridSpec: each row has [heatmap, cbar, heatmap, cbar, …]
+    rows, cols = 3, 3
+    fig = plt.figure(figsize=(18, 18))
+    gs = fig.add_gridspec(
+        nrows=rows,
+        ncols=cols * 2,
+        width_ratios=[1, 0.05] * cols,
+        wspace=0.3,
+        hspace=0.3
+    )
+    axes = gs.subplots()
+
+    # 3) Plot each example
+    for idx, (src, pred, mat) in enumerate(examples):
+        r = idx // cols
+        c = idx % cols
+
+        # Heatmap at column 2*c
+        ax = axes[r, 2*c]
+        im = ax.imshow(mat, aspect='auto', cmap='viridis')
+        ax.set_title("Attention heatmap", fontsize=16)
+        ax.set_xlabel("Source (input)", fontsize=14)
+        ax.set_ylabel("Prediction (output)", fontsize=14)
+        ax.set_xticks(range(len(src)))
+        ax.set_xticklabels(src, rotation=0, fontsize=10)
+        ax.set_yticks(range(len(pred)))
+        ax.set_yticklabels(pred, fontsize=10)
+        ax.xaxis.set_major_locator(ticker.MultipleLocator(1))
+        ax.yaxis.set_major_locator(ticker.MultipleLocator(1))
+
+        # Colorbar at column 2*c + 1
+        cax = axes[r, 2*c + 1]
+        cb = fig.colorbar(im, cax=cax, orientation='vertical')
+        cb.ax.yaxis.set_ticks_position('left')
+        cb.ax.yaxis.set_label_position('left')
+        cb.ax.set_ylabel("Attention weight", fontsize=10)
+
+    # Hide any leftover axes if fewer than rows*cols examples
+    total = len(examples)
+    for ax in axes.flatten()[total*2:]:
+        ax.set_visible(False)
+
+    # 4) Save and log
+    out_path = f"plots/attention_grid_{name}_3x3.png"
+    plt.savefig(out_path, dpi=300)
+    plt.close(fig)
+    wandb.log({f"Attention Grid ({name})": wandb.Image(out_path)})
 
 
-def log_test_predictions_to_wandb(encoder, decoder, test_loader, input_lang, output_lang, name="vanilla"):
+
+def log_test_predictions_to_wandb(encoder, decoder, test_loader, input_lang, output_lang,name="vanilla"):
+    """
+    Log model predictions and confusion matrices to WandB, and optionally
+    attention visualizations for attention-based decoders.
+
+    Args:
+        encoder (torch.nn.Module): Encoder model.
+        decoder (torch.nn.Module): Decoder model (vanilla or with attention).
+        test_loader (DataLoader): DataLoader for test set.
+        input_lang (Language): Source language vocabulary.
+        output_lang (Language): Target language vocabulary.
+        name (str): Identifier for the run ('vanilla' or 'attention').
+    """
     
+
     encoder.eval()
     decoder.eval()
     wandb.login()
@@ -164,45 +212,38 @@ def log_test_predictions_to_wandb(encoder, decoder, test_loader, input_lang, out
     all_data = []
     write_data_file = []
 
-    # For confusion matrix
+    # Prepare confusion matrix
     labels = sorted(output_lang.word_to_index.keys())
     char_to_index = {char: i for i, char in enumerate(labels)}
     confusion = torch.zeros(len(labels), len(labels), dtype=torch.int32)
 
     with torch.no_grad():
-        for batch in test_loader:
-            inputs, outputs = batch
+        for inputs, outputs in test_loader:
             inputs = inputs.to(DEVICE)
             encoder_outputs, encoder_hidden = encoder(inputs)
             if name == 'vanilla':
                 decoder_outputs, _ = decoder(encoder_outputs, encoder_hidden)
             elif name == 'attention':
-                decoder_outputs,_,attention_weights = decoder(
-                    encoder_outputs, encoder_hidden)                
+                decoder_outputs, _, attention_weights = decoder(
+                    encoder_outputs, encoder_hidden
+                )
             _, topi = decoder_outputs.topk(1)
             predicted_ids = topi.squeeze()
 
             for i in range(inputs.size(0)):
-                input_word = []
-                predicted_word = []
-                output_word = []
-
+                # Decode inputs, predictions, and ground truth
+                input_word, predicted_word, output_word = [], [], []
                 for j in range(MAX_LENGTH):
-                    if inputs[i][j].item() == end:
-                        break
+                    if inputs[i][j].item() == end: break
                     input_word.append(input_lang.index_to_word[inputs[i][j].item()])
-
                 for j in range(MAX_LENGTH):
-                    if predicted_ids[i][j].item() == end:
-                        break
+                    if predicted_ids[i][j].item() == end: break
                     predicted_word.append(output_lang.index_to_word[predicted_ids[i][j].item()])
-
                 for j in range(MAX_LENGTH):
-                    if outputs[i][j].item() == end:
-                        break
+                    if outputs[i][j].item() == end: break
                     output_word.append(output_lang.index_to_word[outputs[i][j].item()])
 
-                # Update confusion matrix
+                # Update confusion matrix counts
                 min_len = min(len(output_word), len(predicted_word))
                 for k in range(min_len):
                     true_char = output_word[k]
@@ -218,61 +259,29 @@ def log_test_predictions_to_wandb(encoder, decoder, test_loader, input_lang, out
                 write_data_file.append([input_str, predicted_str, target_str])
                 all_data.append([input_str, predicted_str, target_str, correct])
 
-        # Save predictions
-        with open(f'predicted_{name}/{name}.txt', 'w') as f:
+        # Save raw predictions
+        output_dir = f'predicted_{name}'
+        os.makedirs(output_dir, exist_ok=True)
+        with open(f'{output_dir}/{name}.txt', 'w') as f:
             for item in write_data_file:
-                for datum in item:
-                    f.write("%s,\t" % datum)
-                f.write("\n")
-        print(f'{name}.txt saved in predicted_{name}/')
+                f.write(",\t".join(item) + "\n")
+        print(f'{name}.txt saved in {output_dir}/')
 
-        # Save sample predictions to wandb
-        sampled = random.sample(all_data, 10)
+        # Log sample table to WandB
+        sampled = random.sample(all_data, min(len(all_data), 10))
         for row in sampled:
             table.add_data(*row)
         wandb.log({f"{name} Predictions": table})
 
-        confusion_np = confusion.numpy()
-        fig, ax = plt.subplots(figsize=(20, 20),dpi=300)
-        im = ax.imshow(confusion_np, cmap='Blues')
-
-        # Tick labels
-        ax.set_xticks(np.arange(len(labels)))
-        ax.set_yticks(np.arange(len(labels)))
-        ax.set_xticklabels(labels, fontsize=8, rotation=90)
-        ax.set_yticklabels(labels, fontsize=8)
-
-        # Axis labels
-        ax.set_xlabel("Predicted", fontsize=14)
-        ax.set_ylabel("Ground Truth", fontsize=14)
-        ax.set_title("Character-level Confusion Matrix", fontsize=16)
-
-        # Add counts to cells
-        for i in range(len(labels)):
-            for j in range(len(labels)):
-                count = confusion_np[i, j]
-                if count > 0:
-                    ax.text(j, i, str(count), ha='center', va='center', color='black', fontsize=6)
-
-        # Add colorbar
-        fig.colorbar(im, ax=ax)
-        plt.tight_layout()
-
-        # Save locally
-        save_path = f'plots/confusion_matrix_{name}.png'
-        plt.savefig(save_path)
-        print(f'Confusion matrix saved to {save_path}')
-        plt.close()
-        
-        wandb.log({f"Confusion Matrix Image ({name})": wandb.Image(save_path)})
-
+        # If attention model, log additional heatmaps
         if name == 'attention':
-            # generate_word_heatmap(encoder=encoder,decoder=decoder,dataloader=test_loader,input_lang=input_lang,output_lang=output_lang,name=name)
-            src_words, pred_words, attentions = get_attention_map(encoder, decoder, test_loader,input_lang, output_lang)
-            plot_attention_grid(src_words, pred_words, attentions)
-            # log both images to W&B
-            wandb.log({
-                "Attention Grid 3x3": wandb.Image("plots/attention_grid_3x3.png"),
-                "Attention Example 10th": wandb.Image("plots/attention_example_10th.png")
-            })
-
+            generate_word_heatmap(
+                encoder=encoder,
+                decoder=decoder,
+                dataloader=test_loader,
+                input_lang=input_lang,
+                output_lang=output_lang,
+                name=name
+            )
+            generate_individual_heatmap(encoder, decoder,test_loader, input_lang,output_lang)
+            print('Attention visualizations logged.')

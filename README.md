@@ -26,6 +26,8 @@ The Encoder-Decoder model (`Attenion_Network`) supports above all along with the
 ## 📁 Directory Structure
     /dakshina_dataset_v1.0/
     /models/                        # after training, the model is saved in this directory
+    /plots/                         # contains some plot like confusion matrix, attention-heatmap, etc.
+    /web_page/                      # contains the html file that help to visualize the attention based heatmaps.
     /predicted_vanilla/             # Have a .txt file that have the prediction made by the vanilla model.(English_Word,Predicted_Word,Actual_Word)
     /predicted_attention/           # Have a .txt file that have the prediction made by the attention model.(English_Word,Predicted_Word,Actual_Word)
     ./
@@ -38,6 +40,8 @@ The Encoder-Decoder model (`Attenion_Network`) supports above all along with the
     ├── train.py                    # Script to train vanilla Seq2Seq (beam sizes 1,2,4)
     ├── test.py                     # Script to load & evaluate saved Attention model or vanilla model
     ├── main.py                     # Runs the training of attention or vanilla by taking command line arguments
+    ├── utils.py                     # Contains some of the helper function needed by other scripts.
+    ├── connectitvity.py                     # Contains the script that creates the visualization of attention heatmap script.
     
 
 ## 📂 Repository Structure
@@ -132,6 +136,14 @@ These files contain the essential code for building and running the neural netwo
   - The arguments of this file is same as that of the `main.py` file.
   - While testing make sure that you pass the same argument values that are needed to test the model.
   - **Note:** This file don't take `--epochs`,`--learning_rate`,`--weight_decay`,`--evaluate`,`--save_model` as arguments, there is no need to use these arguments as this file onyl evaulate on the test dataset.
+  
+- **`conectivity.py`** 📊  
+  - After running this code, you can directly check the visualization in the wandb run or by launching the python server. Procedure to check by launching the server is given below.
+
+- **`utils.py`** 📊  
+  - This code contains all the helper functions needed in `test.py` file and `connectivity.py` file.
+  - This file contains the code to create the visualization also.
+  - You can't run this file directly, it's just used in other files.
 
 
 ## 🚀 Training the Attention/Vanilla Based Encoder-Decoder Model
@@ -146,10 +158,11 @@ These files contain the essential code for building and running the neural netwo
     pip3 install -r requirements.txt
     ```
 
-3. ### To train the attention/vanilla model, run the following command:
+3. ### To train the attention/vanilla model (with best hyperparameters), run the following command:
     ```bash
-    python train.py
+    python train.py -arch <attention/vanilla>
     ```
+    Either choose `-arch attention` or `-arch vanilla`. This script will train the model, log different `metrics` in wandb platform and also save the model in `models/` folder.
 4. ### To get the `input_dim` and `output_dim` for the model, run the following command:
     ```bash
     python dataset.py
@@ -159,16 +172,38 @@ These files contain the essential code for building and running the neural netwo
 
 5. ### To train the attention/vanilla (with user input), run the following command:
     ```bash
-    python main.py -h_dim 256 -e_dim 64 --enc_layers 3 --dec_layers 3 --cell_type LSTM -do 0.2 -e 30 -b 16 -lr 0.001 -t_forcing 0.6 -arch transformer --evaluate True -lang hi --input_dim 28 --output_dim 65 --save_model True --log_wandb
+    python main.py -h_dim 256 -e_dim 64 --enc_layers 3 --dec_layers 3 --cell_type LSTM -do 0.2 -e 30 -b 16 -lr 0.001 -t_forcing 0.6 -arch attention --evaluate True -lang hi --input_dim 28 --output_dim 65 --save_model True --log_wandb
     ```
     This will start training the network and start logging in wandb. If you don't want to log the data in Wandb then remove the `--log_wandb` flag.
     
     Remember that `input_dim` and `output_dim` values can be obtained by running `dataset.py` file seperately.
 
-4. ### After the training , run the following command to test it
+6. ### After the training , run the following command to test it
+   While running the test script, make sure you pass the same valid arguments used to train the model or else the script will not work.
     ```bash
-    python test.py -h_dim 256 -e_dim 64 --enc_layers 3 --dec_layers 3 --cell_type LSTM -do 0.2 -b 16 -t_forcing 0.6 -arch transformer -lang hi --input_dim 28 --output_dim 65 --log_wandb
+    python test.py -h_dim 256 -e_dim 64 --enc_layers 3 --dec_layers 3 --cell_type LSTM -do 0.2 -b 16 -t_forcing 0.6 -arch attention -lang hi --input_dim 28 --output_dim 65 --log_wandb
     ```
+
+6. ### After the training is done , Run the following command to visualize the attention heatmap by hover over the predicted characters.
+   When you hover over a predicted character, it will highlight the characters in the input word by their attention score. `The more the attention score , the more the intensity of the highlighted word`.
+    ```bash
+    python connectivity.py
+    ```
+    This will do some processing and randomly picks 10 different data from test dataset and make the visualization script and fill the `.html` files present inside the `web_page/` folder. Once this is done, do the following.
+
+    1. Either you can check the wandb run. THe link will be printed on the temrinal itself.
+    2. Or you can run the server to launch this in your own browser.
+  
+    Run the following command to run the server and open the page in browser
+    ```bash
+    cd web_page/
+    python -m http.server 8080
+    ```
+    now copy the followin link and paste it in your browser
+    ```
+    http://localhost:8080/attention.html
+    ```
+
 
 
 

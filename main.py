@@ -1,3 +1,58 @@
+"""
+train.py
+
+Train a sequence-to-sequence translation model (vanilla or attention-based) with fully-configurable hyperparameters
+via command-line arguments, and optional logging to Weights & Biases.
+
+This script will:
+
+  1. Parse command-line options for model architecture, training settings, and experiment tracking.
+  2. Initialize the dataset for the chosen language.
+  3. Build either:
+       • A vanilla Encoder + BeamSearchDecoder wrapped in Seq2Seq_Model, or
+       • An Encoder + Decoder_Attention wrapped in Attention_Network.
+  4. Train for the specified number of epochs, with optional:
+       - Weight decay
+       - Teacher forcing ratio
+       - Batch size
+       - Dropout rate
+       - Learning rate
+       - Beam search width
+       - WandB logging (project & entity)
+       - Model saving
+       - Periodic test set evaluation
+  5. Print training/validation metrics per epoch, and final test loss/accuracy if requested.
+
+Usage:
+    python train.py [OPTIONS]
+
+Options:
+  --wandb_project, -wp    Name of the W&B project (default: 'dl-assignment3')
+  --wandb_entity, -we     W&B entity/account name (default: 'cs24s031')
+  --hidden_dim, -h_dim     Size of RNN hidden state (default: 32)
+  --embed_dim, -e_dim      Dimensionality of token embeddings (default: 64)
+  --enc_layers, -e_layers  Number of encoder layers (default: 3)
+  --dec_layers, -d_layers  Number of decoder layers (default: 3)
+  --cell_type, -c_type     RNN cell type: 'RNN', 'GRU', or 'LSTM' (default: 'GRU')
+  --dropout, -do           Dropout probability between layers (default: 0.3)
+
+  --epochs, -e             Number of training epochs (default: 25)
+  --batch_size, -b         Training batch size (default: 64)
+  --learning_rate, -lr     Learning rate for optimizers (default: 1e-4)
+  --weight_decay, -w_d     Weight decay for optimizers (default: 5e-05)
+  --beam_size              Beam search width (default: 3)
+  --teacher_forcing, -t_forcing  
+                           Probability of teacher forcing during decoding (default: 0.5)
+
+  --save_model             Whether to save the final model parameters (default: False)
+  --log_wandb, -logw       Whether to log training metrics to W&B (default: False)
+  --architecture, -arch    'attention' or 'vanilla' (default: 'attention')
+  --evaluate               If True, run test-set evaluation at end of training (default: False)
+  --language, -lang        Target language code for dataset (default: 'hi')
+  --input_dim, -i_dim      Input vocabulary size (print from dataset.py) (default: 28)
+  --output_dim, -o_dim     Output vocabulary size (print from dataset.py) (default: 65)
+"""
+
 from dataset import Dataset
 from config import *
 import argparse
