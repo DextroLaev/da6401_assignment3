@@ -1,5 +1,7 @@
 # 🔤 Character-Level Seq2Seq & Attention Transliteration
 
+Wandb Report Link: (https://wandb.ai/cs24s031-indian-institute-of-technology-madras/dl-assignment3/reports/DA6401-Assignment-3-Report--VmlldzoxMjgyMzIwNQ?accessToken=b0sqn5yaods27wd0ekkgvs4yrl49hatfvj9iwyea2zobum1vi1hu6tqcwnw0cytl)
+
 A PyTorch‐based toolkit for character-level transliteration for Dakshina transliteration dataset and supports hyperparameter sweeps, This project includes:
 
 - A vanilla Seq2Seq model that uses Encoder-Decoder.
